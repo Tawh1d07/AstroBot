@@ -1,0 +1,18 @@
+# Secrets: real API keys and tokens live in .env and must never be committed
+.env
+.env.*
+!.env.example
+
+# Virtual environment
+.venv/
+
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
