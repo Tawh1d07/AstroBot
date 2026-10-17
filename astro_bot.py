@@ -1,17 +1,21 @@
-#Contains partially completed code with sections for you to complete
-#IT IS MANDATORY TO USE THE RESOURCE PROVIDED
-#The starter code is structured into functions and modules. You are required to complete the missing sections while maintaining this modular design.  Further step by step instructions can be found in the appendix A of this assignment brief. 
-#For extended features implement it within the existing modular structure. The new feature must be triggered using a new command (e.g., /stars, /moon, /sky) and follow the same approach 
-#Use Git for version control. Maintain a repository on GitHub to track your project’s progress and changes. Ensure regular commits for each step with meaningful messages that document your step by stepdevelopment process. 
+# AstroBot - a Webex chat bot for the Astronomy Club.
+# Built from the provided starter code: the bot monitors one Webex room, answers
+# slash commands with live data from web APIs and posts the replies back to the room.
+# API keys are read from a git-ignored .env file (see .env.example).
 
 # =========================
 # REQUIRED LIBRARIES
 # =========================
 
-import #complete the import statement to include the requests library
-import #complete the import statement to include the json library
-import #complete the import statement to include the time library
-from #complete the import statement to include the datetime library
+import requests  # sends the HTTP GET/POST requests to every API
+import json  # encodes the Webex message body as JSON
+import time  # polling delay and epoch -> human-readable time conversion
+from datetime import datetime, timedelta, timezone  # local times for weather reports
+
+import os  # reads API keys from environment variables
+from getpass import getpass  # hides keys while they are typed
+
+from dotenv import load_dotenv  # loads API keys from the git-ignored .env file
 
 # =========================
 # CONFIGURATION FUNCTIONS
