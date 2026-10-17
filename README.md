@@ -78,18 +78,32 @@ This investigation sheet helps you gather key technical information from the thr
 
 | Criteria | Details |
 |---------|---------|
-| Provider used (Choose one) | **LocationIQ / Mapbox/ OpenWeatherMap other -provide detail** |
-| API Base URL | `_______________________________` |
-| Endpoint for geocoding | `_______________________________` |
-| Endpoint for reverse geocoding | `_______________________________` |
-| Authentication method | `_______________________________` |
-| Required query parameters | `_______________________________` |
-| Sample request with latitude/longitude | `_______________________________` |
-| Sample JSON response (formatted example) |  
+| Provider used (Choose one) | **OpenWeatherMap Geocoding API.** It uses the same account and API key as the Weather API, so the bot needs only one weather key. |
+| API Base URL | `https://api.openweathermap.org/geo/1.0`. The docs show `http://`, but HTTPS works and keeps the API key encrypted in transit. |
+| Endpoint for geocoding | `GET /direct?q={city name},{state code},{country code}&limit={limit}&appid={API key}` (place name to coordinates) |
+| Endpoint for reverse geocoding | `GET /reverse?lat={lat}&lon={lon}&limit={limit}&appid={API key}` (coordinates to place name) |
+| Authentication method | API key passed as the `appid` query parameter |
+| Required query parameters | Direct: `q` and `appid`; `limit` is optional, up to 5 results. Reverse: `lat`, `lon` and `appid`; `limit` is optional. Country codes in `q` use ISO 3166, e.g. `q=Paris,FR`. |
+| Sample request with latitude/longitude | `https://api.openweathermap.org/geo/1.0/reverse?lat=51.5098&lon=-0.1180&limit=1&appid={API key}` |
+| Sample JSON response (formatted example) | First result of the documented reverse-geocoding example (below; the `local_names` translations are omitted) |
+
+```json
+[
+  {
+    "name": "City of London",
+    "lat": 51.5128,
+    "lon": -0.0918,
+    "country": "GB"
+  }
+]
 ```
 
-```
-|
+**Findings**
+
+- Both endpoints return a JSON **array**, best match first. AstroBot asks for `limit=1` and uses `data[0]`.
+- A direct lookup for `London` with `limit=5` returns London (GB), City of London, London (Ontario, CA), Chelsea and London (Kentucky, US). Adding a country code (`London,GB`) makes the result unambiguous.
+- `state` is only present for some locations, so the bot reads it with `.get()` and handles it being missing.
+- **Reverse geocoding over the ocean returns an empty array `[]`.** The ISS is over water most of the time, so AstroBot then shows *"Over Ocean / No Nearby City"*.
 
 ---
 
@@ -98,16 +112,60 @@ This investigation sheet helps you gather key technical information from the thr
 
 | Criteria | Details |
 |---------|---------|
-| API Provider (Choose one) | **OpenWeather, OpenWeatherMap (or other – provide details)** |
-| API Base URL | `_______________________________` |
-| Endpoint for current weather | `_______________________________` |
-| Authentication method | `_______________________________` |
-| Required query parameters | `_______________________________` |
-| Sample JSON response (formatted example) |  
+| API Provider (Choose one) | **OpenWeather Current Weather Data API.** The free plan allows 60 calls a minute and 1,000,000 calls a month, and includes the Geocoding API. |
+| API Base URL | `https://api.openweathermap.org/data/2.5` |
+| Endpoint for current weather | `GET /weather?lat={lat}&lon={lon}&appid={API key}&units=metric` |
+| Authentication method | API key passed as the `appid` query parameter. A new key activates automatically up to 2 hours after registration; until then every call returns `401 Invalid API key`. |
+| Required query parameters | `lat`, `lon` and `appid`. Optional: `units` (`standard` is the default and gives Kelvin; `metric` gives °C and m/s), `lang` and `mode`. Looking a city up by name (`q=`) is deprecated, so AstroBot gets coordinates from the Geocoding API first. |
+| Sample JSON response (formatted example) | The documented example (below). It uses the default `standard` units, so `temp` is in Kelvin. |
+
+```json
+{
+  "coord": { "lon": 10.99, "lat": 44.34 },
+  "weather": [
+    { "id": 501, "main": "Rain", "description": "moderate rain", "icon": "10d" }
+  ],
+  "base": "stations",
+  "main": {
+    "temp": 298.48,
+    "feels_like": 298.74,
+    "temp_min": 297.56,
+    "temp_max": 300.05,
+    "pressure": 1015,
+    "humidity": 64,
+    "sea_level": 1015,
+    "grnd_level": 933
+  },
+  "visibility": 10000,
+  "wind": { "speed": 0.62, "deg": 349, "gust": 1.18 },
+  "rain": { "1h": 3.16 },
+  "clouds": { "all": 100 },
+  "dt": 1661870592,
+  "sys": {
+    "type": 2,
+    "id": 2075663,
+    "country": "IT",
+    "sunrise": 1661834187,
+    "sunset": 1661882248
+  },
+  "timezone": 7200,
+  "id": 3163858,
+  "name": "Zocca",
+  "cod": 200
+}
 ```
 
-```
-|
+**Fields AstroBot uses**
+
+| Field | Meaning | Used for |
+|-------|---------|----------|
+| `weather[0].id`, `weather[0].description` | Condition code (2xx thunderstorm, 3xx drizzle, 5xx rain, 6xx snow, 7xx fog/haze, 800 clear, 80x clouds) and its text | Conditions line; rain, snow and fog rule out stargazing |
+| `main.temp`, `main.feels_like`, `main.humidity` | Temperature (°C with `units=metric`) and relative humidity (%) | Temperature and humidity lines |
+| `clouds.all` | Cloud cover (%) | Main input to the stargazing verdict |
+| `visibility` | Visibility in metres, capped at 10,000 | Haze check in the stargazing verdict |
+| `wind.speed` | Wind speed (m/s with `metric`) | Wind line (strong wind shakes telescopes) |
+| `dt`, `timezone`, `sys.sunrise`, `sys.sunset` | UTC epoch times and the location's offset from UTC in seconds | Local observation time, sunrise and sunset, and whether it is currently dark |
+| `name`, `sys.country` | Place name and two-letter country code. Over the ocean `name` is an empty string and `country` is missing. | Location line, with an "Unknown" fallback |
 
 ---
 
