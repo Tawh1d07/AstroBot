@@ -49,13 +49,28 @@ This investigation sheet helps you gather key technical information from the thr
 
 | Criteria | Details |
 |---------|---------|
-| API Base URL | `_______________________________` |
-| Endpoint for current ISS location | `_______________________________` |
-| Sample response format (example JSON) |  
+| API Base URL | `http://api.open-notify.org`. HTTP only: HTTPS connections to this host are refused. |
+| Endpoint for current ISS location | `GET /iss-now.json` (`http://api.open-notify.org/iss-now.json`). No authentication and no parameters. |
+| Sample response format (example JSON) | Live response captured on 23 Oct 2026 (below) |
+
+```json
+{
+  "timestamp": 1792780126,
+  "message": "success",
+  "iss_position": {
+    "latitude": "10.0567",
+    "longitude": "80.7557"
+  }
+}
 ```
 
-```
-|
+**Findings**
+
+- `timestamp` is a Unix epoch time in seconds (UTC) for when the position was valid. `1792780126` converts to **2026-10-23 18:28:46 UTC** (see the epoch section below).
+- `latitude` and `longitude` are returned as **strings**, so AstroBot converts them with `float()` before reverse geocoding and formatting them.
+- `message` is `"success"` when the request worked.
+- Poll rate: the docs ask each client to poll at most about once every 5 seconds, since the position is only recalculated once a second. AstroBot calls this API only when someone sends `/iss`.
+- Because the API is plain HTTP, its responses could be read or altered in transit. No credentials are ever sent to it, so the only risk is to the data's integrity.
 
 ---
 
