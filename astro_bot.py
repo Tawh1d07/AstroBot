@@ -68,8 +68,10 @@ def get_rooms(token):
 
 
 def print_rooms(rooms):
-    for room in rooms:
-        print(#complete the print statement to display the room title and id)
+    print("\nAvailable Webex rooms:")
+    # Number each room so it can be picked by number as well as by name
+    for number, room in enumerate(rooms, start=1):
+        print(f"  {number:>2}. {room.get('title', 'Untitled room')}  [{room.get('type', 'unknown')}]")
 
 
 def select_room(rooms):
