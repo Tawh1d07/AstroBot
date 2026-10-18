@@ -21,15 +21,27 @@ from dotenv import load_dotenv  # loads API keys from the git-ignored .env file
 # CONFIGURATION FUNCTIONS
 # =========================
 def get_webex_token():
-    choice = input("Use hard-coded Webex token? (y/n): ").lower()
-    if choice == "n":
-        token = input("Enter your Webex Access Token: ")
-        return f"Bearer {token}"
-    else:
-        return "Bearer YOUR_WEBEX_TOKEN"
+    # The "hard-coded" token is kept in .env instead of the source code
+    token = get_api_key("Webex access token", os.getenv("WEBEX_ACCESS_TOKEN"))
+    # Accept a token pasted with or without the "Bearer " prefix
+    if token.lower().startswith("bearer "):
+        token = token[len("bearer "):].strip()
+    return f"Bearer {token}"
 
 def get_api_key(prompt, hardcoded_key):
-  #complete the function to get the API key from user input or use a hardcoded key
+    # Offer the key saved in .env first; otherwise ask the user to type one in
+    if hardcoded_key:
+        choice = input(f"Use the {prompt} saved in .env? (y/n): ").strip().lower()
+        if choice != "n":
+            return hardcoded_key.strip()
+    else:
+        print(f"No {prompt} found in .env.")
+
+    key = ""
+    while not key:
+        # getpass hides the key as it is typed so it never appears on screen
+        key = getpass(f"Enter your {prompt}: ").strip()
+    return key
 
 # =========================
 # WEBEX FUNCTIONS
@@ -169,11 +181,14 @@ def get_iss_location(api_key):
 # =========================
 def main():
 
+    # Load WEBEX_ACCESS_TOKEN and OPENWEATHER_API_KEY from .env into the environment
+    load_dotenv()
+
     token = get_webex_token()
 
     weather_key = get_api_key(
-        "Weather API key",
-        "YOUR_OPENWEATHER_API_KEY"
+        "OpenWeather API key",
+        os.getenv("OPENWEATHER_API_KEY")
     )
 
     rooms = get_rooms(token)
