@@ -76,12 +76,21 @@ def print_rooms(rooms):
 
 def select_room(rooms):
     while True:
-        name = input(#complete the input prompt to ask the user for the room name)
+        name = input("\nEnter the room number or part of its name to monitor: ").strip()
+        if not name:
+            continue
+
+        # A number picks the room at that position in the printed list
+        if name.isdigit() and 1 <= int(name) <= len(rooms):
+            room = rooms[int(name) - 1]
+            print(f"Monitoring room: {room.get('title', 'Untitled room')}")
+            return room["id"]
+
         for room in rooms:
-            if name.lower() in room["title"].lower():
-                print(#complete the print statement to confirm the selected room)
+            if name.lower() in room.get("title", "").lower():
+                print(f"Monitoring room: {room['title']}")
                 return room["id"]
-        print(#complete the print statement to indicate that the room was not found)
+        print(f"No room matching '{name}' was found. Please try again.")
 
 
 def get_latest_message(token, room_id):
