@@ -23,6 +23,7 @@ from dotenv import load_dotenv  # loads API keys from the git-ignored .env file
 WEBEX_API_URL = "https://webexapis.com/v1"
 
 REQUEST_TIMEOUT = 10  # seconds to wait for any API before giving up
+POLL_INTERVAL = 5  # seconds between checks for new Webex messages
 
 # =========================
 # CONFIGURATION FUNCTIONS
@@ -94,11 +95,24 @@ def select_room(rooms):
 
 
 def get_latest_message(token, room_id):
-    url = #complete the URL to fetch messages from Webex API
-    params = {"roomId":#complete, "max": #complete}
-    headers = #complete the headers dictionary to include the Authorization header with the token
+    url = f"{WEBEX_API_URL}/messages"
+    # Webex lists messages newest first, so max=1 returns only the latest one
+    params = {"roomId": room_id, "max": 1}
+    headers = {"Authorization": token}
 
-    response = requests.#complete(#complete, headers=headers, params=params)
+    response = requests.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT)
+
+    if response.status_code == 429:
+        # Rate limited: wait as long as the Retry-After header asks before polling again
+        retry_after = response.headers.get("Retry-After", "")
+        wait = int(retry_after) if retry_after.isdigit() else POLL_INTERVAL
+        print(f"Webex rate limit reached - pausing for {wait} seconds")
+        time.sleep(wait)
+        return None, None
+
+    if response.status_code == 401:
+        # Personal access tokens expire after 12 hours, so polling cannot continue
+        raise SystemExit("Webex rejected the access token (401). Get a new token and restart AstroBot.")
 
     if response.status_code != 200:
         return None, None
@@ -214,15 +228,20 @@ def main():
     rooms = get_rooms(token)
 
     if not rooms:
-        print(#complete the print statement )
+        print("No Webex rooms found. Check your access token and network connection.")
         return
 
     print_rooms(rooms)
     room_id = select_room(rooms)
 
+    # Remember the newest existing message so old messages are not treated as commands
     last_message_id, _ = get_latest_message(token, room_id)
+    print("AstroBot is listening for commands. Press Ctrl+C to stop.")
 
     while True:
+
+        # Sleeping at the top of the loop means 'continue' can never skip the delay
+        time.sleep(POLL_INTERVAL)
 
         message_id, message_text = get_latest_message(token, room_id)
 
@@ -230,9 +249,10 @@ def main():
 
             last_message_id = message_id
 
-            print(#complete the print statement to display the received message text)
+            print(f"Received: {message_text}")
 
-            if not message_text.startswith(#complete):
+            # Only messages starting with "/" are commands; ignore normal chat
+            if not message_text.startswith("/"):
                 continue
 
             if message_text.lower() == "/help":
@@ -261,8 +281,6 @@ def main():
 
             else:
                 send_message(token, room_id, "Unknown command. Use /help")
-
-        time.sleep(5)
 
 
 if __name__ == '__main__':
