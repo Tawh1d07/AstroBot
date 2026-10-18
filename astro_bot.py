@@ -18,6 +18,13 @@ from getpass import getpass  # hides keys while they are typed
 from dotenv import load_dotenv  # loads API keys from the git-ignored .env file
 
 # =========================
+# SETTINGS
+# =========================
+WEBEX_API_URL = "https://webexapis.com/v1"
+
+REQUEST_TIMEOUT = 10  # seconds to wait for any API before giving up
+
+# =========================
 # CONFIGURATION FUNCTIONS
 # =========================
 def get_webex_token():
@@ -47,11 +54,13 @@ def get_api_key(prompt, hardcoded_key):
 # WEBEX FUNCTIONS
 # =========================
 def get_rooms(token):
-    url = #complete the URL to fetch rooms from Webex API
-    headers = #complete the headers dictionary to include the Authorization header with the token
-    response = #complete the request to get rooms using requests.get with the url and headers
+    url = f"{WEBEX_API_URL}/rooms"
+    headers = {"Authorization": token}
+    # Most recently active rooms first, so the club's room is near the top of the list
+    params = {"sortBy": "lastactivity", "max": 100}
+    response = requests.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT)
 
-    if response.status_code != #complete the condition to check if the response status code is not xxx:
+    if response.status_code != 200:
         print("Error fetching rooms:", response.status_code)
         return []
 
