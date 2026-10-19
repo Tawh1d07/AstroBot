@@ -183,8 +183,47 @@ def get_weather(city, api_key):
         f"Temperature: {weather['main']['temp']}°C\n"
         f"Conditions: {weather['weather'][0]['description']}\n"
         f"Humidity: {weather['main']['humidity']}%\n"
-        f"Wind speed: {weather['wind']['speed']} m/s"
+        f"Wind speed: {weather['wind']['speed']} m/s\n"
+        f"Stargazing: {assess_stargazing(weather)}"
     )
+
+
+def assess_stargazing(weather):
+    # Rate the current conditions for stargazing from the weather code, cloud cover and visibility
+    clouds = weather.get("clouds", {}).get("all")
+    condition_id = (weather.get("weather") or [{}])[0].get("id")
+    visibility = weather.get("visibility")
+
+    # OpenWeather codes: 2xx-6xx = storms, drizzle, rain or snow; 7xx = mist, fog, haze or dust
+    if condition_id is not None and condition_id < 700:
+        verdict = "Poor - rain, snow or storms"
+    elif condition_id is not None and condition_id < 800:
+        verdict = "Poor - mist, fog or haze"
+    elif clouds is None:
+        verdict = "Unknown - no cloud data"
+    elif clouds > 50:
+        verdict = f"Poor - {clouds}% cloud cover"
+    elif clouds > 20:
+        verdict = f"Fair - {clouds}% cloud cover, look for clear gaps"
+    elif visibility is not None and visibility < 5000:
+        verdict = f"Fair - clear but hazy ({visibility / 1000:.1f} km visibility)"
+    else:
+        verdict = f"Good - {clouds}% cloud cover"
+
+    # These are current conditions, so warn if the sun has not set yet
+    if is_daytime(weather):
+        verdict += " (it is daytime now - check again after sunset)"
+    return verdict
+
+
+def is_daytime(weather):
+    # dt, sunrise and sunset are all UTC epoch seconds, so they compare directly
+    now = weather.get("dt")
+    sunrise = weather.get("sys", {}).get("sunrise")
+    sunset = weather.get("sys", {}).get("sunset")
+    if None in (now, sunrise, sunset):
+        return False
+    return sunrise <= now < sunset
 
 # =========================
 # ISS FUNCTIONS
