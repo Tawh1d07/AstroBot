@@ -173,13 +173,23 @@ This investigation sheet helps you gather key technical information from the thr
 
 | Criteria | Details |
 |---------|---------|
-| Library used | `_______________________________` |
-| Function used to convert epoch | `_______________________________` |
-| Sample code to convert timestamp |  
-```  
+| Library used | `time` (Python standard library). `datetime` is also used, to show weather times in each city's local time. |
+| Function used to convert epoch | `time.gmtime()` converts epoch seconds to a UTC `struct_time`, and `time.strftime()` formats it as text. Both are wrapped in `epoch_to_utc()` in `astro_bot.py`. |
+| Sample code to convert timestamp | See the code below |
+| Output (human-readable time) | `2026-10-23 18:28:46 UTC` |
+
+```python
+import time
+
+timestamp = 1792780126                      # "timestamp" field from the ISS API response
+utc_time = time.gmtime(timestamp)           # struct_time in UTC
+print(time.strftime("%Y-%m-%d %H:%M:%S UTC", utc_time))   # -> 2026-10-23 18:28:46 UTC
 ```
-|
-| Output (human-readable time) | `_______________________________` |
+
+**Findings**
+
+- The Python docs define the epoch as *"January 1, 1970, 00:00:00 (UTC) on all platforms"*. API timestamps are seconds since that moment.
+- `time.gmtime()` was chosen over `time.localtime()` and `time.ctime()` because those two use the **server's** time zone. On this PC (UK, BST) `time.ctime(1792780126)` gives `Fri Oct 23 19:28:46 2026`, an hour ahead of UTC. The ISS is never in the server's time zone, so its time is shown in UTC.
 
 ---
 

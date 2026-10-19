@@ -23,6 +23,7 @@ from dotenv import load_dotenv  # loads API keys from the git-ignored .env file
 WEBEX_API_URL = "https://webexapis.com/v1"
 GEOCODING_API_URL = "https://api.openweathermap.org/geo/1.0"
 WEATHER_API_URL = "https://api.openweathermap.org/data/2.5/weather"
+ISS_API_URL = "http://api.open-notify.org/iss-now.json"  # Open Notify only offers HTTP
 
 REQUEST_TIMEOUT = 10  # seconds to wait for any API before giving up
 POLL_INTERVAL = 5  # seconds between checks for new Webex messages
@@ -229,41 +230,60 @@ def is_daytime(weather):
 # ISS FUNCTIONS
 # =========================
 def reverse_geocode(lat, lon, api_key):
-    url = #complete the URL to fetch reverse geocoding data from OpenWeatherMap API
-    params = #complete the params dictionary to include the latitude, longitude, limit, and the API key
+    url = f"{GEOCODING_API_URL}/reverse"
+    params = {"lat": lat, "lon": lon, "limit": 1, "appid": api_key}
 
-    response = requests.#complete(url, params=params)
+    response = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
 
     if response.status_code != 200:
+        print("Reverse geocoding API error:", response.status_code)
         return None
 
+    # An empty list means there is no named place nearby (e.g. over the ocean)
     data = response.json()
     return data[0] if data else None
 
 
 def get_iss_location(api_key):
-    url = #complete the URL to fetch ISS current location from the Open Notify API
+    url = ISS_API_URL
 
-    response = requests.#complete(#complete)
+    response = requests.get(url, timeout=REQUEST_TIMEOUT)
 
     if response.status_code != 200:
-        return #complete the return statement to indicate whether ISS location retrieved or not
+        return "Sorry, the ISS location could not be retrieved right now. Please try again shortly."
 
     data = response.json()
 
-    lat = data[#complete][#complete]
-    lon = data[#complete][#complete]
+    # Open Notify returns the coordinates as strings, e.g. "51.5072"
+    lat = float(data["iss_position"]["latitude"])
+    lon = float(data["iss_position"]["longitude"])
+    timestamp = data["timestamp"]
 
     location = reverse_geocode(lat, lon, api_key)
 
     place = "Over Ocean / No Nearby City"
 
     if location:
-        place = #
+        place = f"{location['name']}, {location['country']}"
+
+    # Weather at the point on Earth directly below the ISS
+    weather = get_current_weather(lat, lon, api_key)
+    conditions = "unavailable"
+    if weather:
+        conditions = f"{weather['weather'][0]['description']}, {weather['main']['temp']}°C"
 
     return (
-        #complete the return statement to format and return the ISS location information including latitude, longitude, and place name
+        f"ISS location at {epoch_to_utc(timestamp)}\n"
+        f"Latitude: {lat}\n"
+        f"Longitude: {lon}\n"
+        f"Location: {place}\n"
+        f"Weather below: {conditions}"
     )
+
+
+def epoch_to_utc(timestamp):
+    # time.gmtime() turns Unix epoch seconds into a UTC struct_time; strftime() formats it
+    return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(timestamp))
 
 # =========================
 # MAIN BOT LOGIC
@@ -327,7 +347,7 @@ def main():
                     city = parts[1]
                     send_message(token, room_id, get_weather(city, weather_key))
 
-            elif message_text.lower() == "#complete":
+            elif message_text.lower() == "/iss":
                 send_message(token, room_id, get_iss_location(weather_key))
 
             elif message_text.lower() == "#complete":
