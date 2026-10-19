@@ -130,13 +130,20 @@ def get_latest_message(token, room_id):
 
 
 def send_message(token, room_id, message):
-    url = #complete the URL to send messages to Webex API
-    headers = #complete the headers dictionary to include the Authorization header with the token and Content-Type as application/json
+    url = f"{WEBEX_API_URL}/messages"
+    headers = {"Authorization": token, "Content-Type": "application/json"}
     data = {
         "roomId": room_id,
         "text": message
     }
-    requests.#complete(url, headers=headers, data=json.dumps(data))
+    response = requests.post(url, headers=headers, data=json.dumps(data), timeout=REQUEST_TIMEOUT)
+
+    if response.status_code != 200:
+        print("Error sending message:", response.status_code)
+        return None
+
+    # The new message's ID lets the bot recognise its own reply when it polls
+    return response.json().get("id")
 
 # =========================
 # WEATHER FUNCTIONS
@@ -350,7 +357,7 @@ def main():
             elif message_text.lower() == "/iss":
                 send_message(token, room_id, get_iss_location(weather_key))
 
-            elif message_text.lower() == "#complete":
+            elif message_text.lower() == "/quit":
                 send_message(token, room_id, "AstroBot shutting down.")
                 break
 
