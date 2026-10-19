@@ -338,31 +338,33 @@ def main():
                 continue
 
             if message_text.lower() == "/help":
-                send_message(
-                    token,
-                    room_id,
-                    "/weather <city>\n/iss\n/help\n/quit"
-                )
+                reply = "AstroBot commands:\n/weather <city>\n/iss\n/help\n/quit"
 
             elif message_text.lower().startswith("/weather"):
 
                 parts = message_text.split(maxsplit=1)
 
                 if len(parts) < 2:
-                    send_message(token, room_id, "Usage: /weather <city>")
+                    reply = "Usage: /weather <city>"
                 else:
                     city = parts[1]
-                    send_message(token, room_id, get_weather(city, weather_key))
+                    reply = get_weather(city, weather_key)
 
             elif message_text.lower() == "/iss":
-                send_message(token, room_id, get_iss_location(weather_key))
+                reply = get_iss_location(weather_key)
 
             elif message_text.lower() == "/quit":
                 send_message(token, room_id, "AstroBot shutting down.")
                 break
 
             else:
-                send_message(token, room_id, "Unknown command. Use /help")
+                reply = "Unknown command. Use /help"
+
+            # Replies are posted with the user's own token, so they come back as the newest
+            # message on the next poll; remembering the reply's ID stops the bot answering itself
+            reply_id = send_message(token, room_id, reply)
+            if reply_id:
+                last_message_id = reply_id
 
 
 if __name__ == '__main__':
