@@ -21,6 +21,8 @@ from dotenv import load_dotenv  # loads API keys from the git-ignored .env file
 # SETTINGS
 # =========================
 WEBEX_API_URL = "https://webexapis.com/v1"
+GEOCODING_API_URL = "https://api.openweathermap.org/geo/1.0"
+WEATHER_API_URL = "https://api.openweathermap.org/data/2.5/weather"
 
 REQUEST_TIMEOUT = 10  # seconds to wait for any API before giving up
 POLL_INTERVAL = 5  # seconds between checks for new Webex messages
@@ -139,35 +141,49 @@ def send_message(token, room_id, message):
 # WEATHER FUNCTIONS
 # =========================
 def get_city_coordinates(city, api_key):
-    url = #complete the URL to fetch city coordinates from OpenWeatherMap API
-    params = #complete the params dictionary to include the city name, limit, and the API key
-    response = requests.#complete(url, params=params)
+    url = f"{GEOCODING_API_URL}/direct"
+    params = {"q": city, "limit": 1, "appid": api_key}
+    response = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
 
     if response.status_code != 200:
+        print("Geocoding API error:", response.status_code)
         return None
 
     data = response.json()
     return data[0] if data else None
 
 
+def get_current_weather(lat, lon, api_key):
+    # Shared by /weather and /iss: current conditions at a coordinate in metric units
+    url = WEATHER_API_URL
+    params = {"lat": lat, "lon": lon, "units": "metric", "appid": api_key}
+
+    response = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+
+    if response.status_code != 200:
+        print("Weather API error:", response.status_code)
+        return None
+
+    return response.json()
+
+
 def get_weather(city, api_key):
     location = get_city_coordinates(city, api_key)
 
     if not location:
-        return #complete the return statement to indicate that the city was not found
+        return f"Sorry, I couldn't find a city called '{city}'. Try adding a country code, e.g. /weather Paris,FR"
 
-    url = #complete the URL to fetch weather data from OpenWeatherMap API
-    params = #complete the params dictionary to include the latitude, longitude, units as metric, and the API key
+    weather = get_current_weather(location["lat"], location["lon"], api_key)
 
-    response = requests.#complete(url, params=params)
-
-    if response.status_code != 200:
-        return #complete the return statement to indicate that the wheather weather data retrieved or not
-
-    weather = response.json()
+    if not weather:
+        return "Sorry, the weather data could not be retrieved right now. Please try again later."
 
     return (
-        #complete the return statement to format and return the weather information such as including city name, country, temperature, weather description, humidity, and wind speed
+        f"Weather for {location['name']}, {location['country']}\n"
+        f"Temperature: {weather['main']['temp']}°C\n"
+        f"Conditions: {weather['weather'][0]['description']}\n"
+        f"Humidity: {weather['main']['humidity']}%\n"
+        f"Wind speed: {weather['wind']['speed']} m/s"
     )
 
 # =========================
@@ -262,7 +278,7 @@ def main():
                     "/weather <city>\n/iss\n/help\n/quit"
                 )
 
-            elif message_text.lower().startswith(#complete):
+            elif message_text.lower().startswith("/weather"):
 
                 parts = message_text.split(maxsplit=1)
 
