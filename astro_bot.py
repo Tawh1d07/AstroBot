@@ -141,7 +141,10 @@ def send_message(token, room_id, message):
     headers = {"Authorization": token, "Content-Type": "application/json"}
     data = {
         "roomId": room_id,
-        "text": message
+        # Plain-text fallback for clients that cannot show rich text
+        "text": message.replace("**", "").replace("`", ""),
+        # Webex markdown needs two spaces before a newline to keep a single line break
+        "markdown": message.replace("\n", "  \n")
     }
     try:
         response = requests.post(url, headers=headers, data=json.dumps(data), timeout=REQUEST_TIMEOUT)
@@ -192,24 +195,14 @@ def get_weather(city, api_key):
 
     # A usable geocoding result must include coordinates
     if not location or location.get("lat") is None or location.get("lon") is None:
-        return f"Sorry, I couldn't find a city called '{city}'. Try adding a country code, e.g. /weather Paris,FR"
+        return f"❌ I couldn't find a city called '{city}'. Try adding a country code, e.g. `/weather Paris,FR`"
 
     weather = get_current_weather(location["lat"], location["lon"], api_key)
 
     if not weather:
-        return "Sorry, the weather data could not be retrieved right now. Please try again later."
+        return "⚠️ Sorry, the weather data could not be retrieved right now. Please try again later."
 
-    # Read every field with .get() so a missing value shows as N/A instead of crashing
-    conditions = (weather.get("weather") or [{}])[0]
-    readings = weather.get("main", {})
-    return (
-        f"Weather for {format_place(location)}\n"
-        f"Temperature: {format_value(readings.get('temp'), '°C')}\n"
-        f"Conditions: {conditions.get('description', 'Unknown')}\n"
-        f"Humidity: {format_value(readings.get('humidity'), '%', decimals=0)}\n"
-        f"Wind speed: {format_value(weather.get('wind', {}).get('speed'), ' m/s')}\n"
-        f"Stargazing: {assess_stargazing(weather)}"
-    )
+    return format_weather_report(location, weather)
 
 
 def assess_stargazing(weather):
@@ -282,14 +275,14 @@ def get_iss_location(api_key):
         # Open Notify is volunteer-run and sometimes times out, so try a second provider
         data = get_iss_backup_position()
         if data is None:
-            return "Sorry, the ISS location could not be retrieved right now. Please try again shortly."
+            return "⚠️ Sorry, the ISS location could not be retrieved right now. Please try again shortly."
 
     try:
         # Open Notify returns the coordinates as strings, e.g. "51.5072"
         lat = float(data["iss_position"]["latitude"])
         lon = float(data["iss_position"]["longitude"])
     except (KeyError, TypeError, ValueError):
-        return "Sorry, the ISS service returned incomplete data. Please try again shortly."
+        return "⚠️ Sorry, the ISS service returned incomplete data. Please try again shortly."
 
     location = reverse_geocode(lat, lon, api_key)
 
@@ -300,18 +293,8 @@ def get_iss_location(api_key):
 
     # Weather at the point on Earth directly below the ISS
     weather = get_current_weather(lat, lon, api_key)
-    conditions = "Unavailable"
-    if weather:
-        description = (weather.get("weather") or [{}])[0].get("description", "Unknown")
-        conditions = f"{description}, {format_value(weather.get('main', {}).get('temp'), '°C')}"
 
-    return (
-        f"ISS location at {epoch_to_utc(data.get('timestamp'))}\n"
-        f"Latitude: {lat}\n"
-        f"Longitude: {lon}\n"
-        f"Location: {place}\n"
-        f"Weather below: {conditions}"
-    )
+    return format_iss_report(lat, lon, data.get("timestamp"), place, weather)
 
 
 def get_iss_backup_position():
@@ -341,8 +324,11 @@ def epoch_to_utc(timestamp):
     return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(timestamp))
 
 # =========================
-# DATA HANDLING HELPERS
+# FORMATTING FUNCTIONS
 # =========================
+# These build the chat replies. Lines are joined with "\n"; send_message() converts
+# them to Webex markdown. Every value falls back to N/A or Unknown when it is missing.
+
 def format_value(value, unit="", decimals=1):
     # Show a reading with its unit, or N/A when the API did not provide it
     if value is None:
@@ -359,12 +345,90 @@ def format_place(location):
     return ", ".join(part for part in parts if part) or "Unknown location"
 
 
+def format_local_time(timestamp, offset_seconds, pattern="%a %d %b %Y, %H:%M"):
+    # OpenWeather gives UTC epoch seconds plus the location's offset from UTC in seconds
+    if timestamp is None:
+        return "Unknown"
+    local_zone = timezone(timedelta(seconds=offset_seconds or 0))
+    return datetime.fromtimestamp(timestamp, tz=local_zone).strftime(pattern)
+
+
+def format_coordinates(lat, lon):
+    # e.g. 51.5072° N, 0.1276° W
+    lat_side = "N" if lat >= 0 else "S"
+    lon_side = "E" if lon >= 0 else "W"
+    return f"{abs(lat):.4f}° {lat_side}, {abs(lon):.4f}° {lon_side}"
+
+
+def summarise_weather(weather):
+    # One-line summary of the weather below the ISS
+    if not weather:
+        return "Unavailable"
+    description = (weather.get("weather") or [{}])[0].get("description", "unknown").capitalize()
+    temperature = format_value(weather.get("main", {}).get("temp"), "°C")
+    clouds = format_value(weather.get("clouds", {}).get("all"), "%", decimals=0)
+    return f"{description}, {temperature}, {clouds} cloud cover"
+
+
+def format_weather_report(location, weather):
+    # Reply for /weather <city>
+    conditions = (weather.get("weather") or [{}])[0]
+    readings = weather.get("main", {})
+    sun = weather.get("sys", {})
+    offset = weather.get("timezone")
+    visibility = weather.get("visibility")
+    visibility_km = visibility / 1000 if visibility is not None else None
+
+    lines = [
+        f"🌤️ **Weather for {format_place(location)}**",
+        f"🕒 Local time: {format_local_time(weather.get('dt'), offset)}",
+        f"🌡️ Temperature: {format_value(readings.get('temp'), '°C')} "
+        f"(feels like {format_value(readings.get('feels_like'), '°C')})",
+        f"☁️ Conditions: {conditions.get('description', 'unknown').capitalize()}, "
+        f"{format_value(weather.get('clouds', {}).get('all'), '%', decimals=0)} cloud cover",
+        f"💧 Humidity: {format_value(readings.get('humidity'), '%', decimals=0)}",
+        f"💨 Wind: {format_value(weather.get('wind', {}).get('speed'), ' m/s')}",
+        f"👁️ Visibility: {format_value(visibility_km, ' km')}",
+        f"🌅 Sunrise {format_local_time(sun.get('sunrise'), offset, '%H:%M')} · "
+        f"🌇 Sunset {format_local_time(sun.get('sunset'), offset, '%H:%M')} (local time)",
+        f"🔭 **Stargazing: {assess_stargazing(weather)}**",
+    ]
+    return "\n".join(lines)
+
+
+def format_iss_report(lat, lon, timestamp, place, weather):
+    # Reply for /iss, with a map link so users can see where the station is
+    map_link = f"https://www.openstreetmap.org/?mlat={lat:.4f}&mlon={lon:.4f}#map=4/{lat:.4f}/{lon:.4f}"
+    lines = [
+        "🛰️ **International Space Station - live position**",
+        f"🕒 Time: {epoch_to_utc(timestamp)}",
+        f"📍 Coordinates: {format_coordinates(lat, lon)}",
+        f"🌍 Location: {place}",
+        f"🌦️ Weather below: {summarise_weather(weather)}",
+        f"🗺️ Map: {map_link}",
+    ]
+    return "\n".join(lines)
+
+
+def format_help():
+    # Reply for /help (starts with an emoji, not "/", so it can never look like a command)
+    return "\n".join([
+        "🔭 **AstroBot commands**",
+        "• `/weather <city>` - current weather and a stargazing verdict, e.g. `/weather London,GB`",
+        "• `/iss` - where the International Space Station is right now",
+        "• `/help` - show this list",
+        "• `/quit` - stop AstroBot",
+    ])
+
+# =========================
+# INPUT VALIDATION
+# =========================
 def validate_city(city, command):
     # Return an error message for an unusable city name, or None if it looks valid
     if not city:
-        return f"Usage: {command} <city>, e.g. {command} London,GB"
+        return f"ℹ️ Usage: `{command} <city>`, e.g. `{command} London,GB`"
     if len(city) > MAX_CITY_LENGTH or not CITY_PATTERN.fullmatch(city):
-        return "Please send a plain city name using letters, spaces, commas, hyphens or apostrophes, e.g. London,GB"
+        return "⚠️ Please send a plain city name using letters, spaces, commas, hyphens or apostrophes, e.g. `London,GB`"
     return None
 
 # =========================
@@ -434,7 +498,7 @@ def main():
 
             try:
                 if command == "/help":
-                    reply = "AstroBot commands:\n/weather <city>\n/iss\n/help\n/quit"
+                    reply = format_help()
 
                 elif command == "/weather":
                     # validate_city() returns an error message, or None so the lookup runs
@@ -444,18 +508,18 @@ def main():
                     reply = get_iss_location(weather_key)
 
                 elif command == "/quit":
-                    send_message(token, room_id, "AstroBot shutting down.")
+                    send_message(token, room_id, "🔭 AstroBot is shutting down. Clear skies!")
                     break
 
                 else:
-                    reply = "Unknown command. Use /help"
+                    reply = "❓ Unknown command. Send `/help` to see what I can do."
 
             except requests.RequestException as error:
                 print("API request failed:", type(error).__name__)
-                reply = "Sorry, I couldn't reach one of the data services. Please try again in a minute."
+                reply = "⚠️ Sorry, I couldn't reach one of the data services. Please try again in a minute."
             except (KeyError, TypeError, ValueError) as error:
                 print("Unexpected API data:", type(error).__name__, error)
-                reply = "Sorry, a data service sent an unexpected response. Please try again later."
+                reply = "⚠️ Sorry, a data service sent an unexpected response. Please try again later."
 
             # Replies are posted with the user's own token, so they come back as the newest
             # message on the next poll; remembering the reply's ID stops the bot answering itself

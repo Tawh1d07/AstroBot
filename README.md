@@ -215,6 +215,7 @@ print(time.strftime("%Y-%m-%d %H:%M:%S UTC", utc_time))   # -> 2026-10-23 18:28:
 
 - The Python docs define the epoch as *"January 1, 1970, 00:00:00 (UTC) on all platforms"*. API timestamps are seconds since that moment.
 - `time.gmtime()` was chosen over `time.localtime()` and `time.ctime()` because those two use the **server's** time zone. On this PC (UK, BST) `time.ctime(1792780126)` gives `Fri Oct 23 19:28:46 2026`, an hour ahead of UTC. The ISS is never in the server's time zone, so its time is shown in UTC.
+- For `/weather`, OpenWeather supplies `dt`, `sys.sunrise` and `sys.sunset` (UTC epoch) plus `timezone` (the offset in seconds). `format_local_time()` uses `datetime.fromtimestamp(ts, tz=timezone(timedelta(seconds=offset)))` to show them in the **city's own local time**. For example, Sydney showed `Sat 24 Oct 2026, 05:59` when UTC was 18:59 on 23 Oct.
 
 ---
 
