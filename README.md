@@ -71,6 +71,31 @@ This investigation sheet helps you gather key technical information from the thr
 - `message` is `"success"` when the request worked.
 - Poll rate: the docs ask each client to poll at most about once every 5 seconds, since the position is only recalculated once a second. AstroBot calls this API only when someone sends `/iss`.
 - Because the API is plain HTTP, its responses could be read or altered in transit. No credentials are ever sent to it, so the only risk is to the data's integrity.
+- **Reliability:** Open Notify is a volunteer-run service. On 23 Oct 2026, one in four direct `curl` calls hung for the full 12-second timeout, another took 3.3 seconds, and one bot test failed with `ConnectTimeout`. AstroBot therefore waits at most 5 seconds for it and then switches to a backup provider.
+
+**Backup ISS provider: "Where the ISS at?"**
+
+| Criteria | Details |
+|---------|---------|
+| API Base URL | `https://api.wheretheiss.at/v1` (HTTPS) |
+| Endpoint | `GET /satellites/25544` (25544 is the ISS's NORAD catalogue ID). Optional parameters: `units` (`kilometers` or `miles`) and `timestamp`. |
+| Authentication | None. The docs ask clients to stay at roughly one request per second. |
+| Used for | Automatic fallback in `get_iss_backup_position()`, which reshapes the reply into Open Notify's format. Unlike Open Notify, `latitude` and `longitude` are numbers. |
+
+```json
+{
+  "name": "iss",
+  "id": 25544,
+  "latitude": -3.5136102100201,
+  "longitude": -110.36503394941,
+  "altitude": 422.80524224197,
+  "velocity": 27567.288735574,
+  "visibility": "daylight",
+  "timestamp": 1792781908,
+  "units": "kilometers"
+}
+```
+*(Live response captured on 23 Oct 2026, trimmed: the `footprint`, `daynum` and `solar_lat`/`solar_lon` fields are omitted.)*
 
 ---
 

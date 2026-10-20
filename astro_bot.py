@@ -13,6 +13,7 @@ import time  # polling delay and epoch -> human-readable time conversion
 from datetime import datetime, timedelta, timezone  # local times for weather reports
 
 import os  # reads API keys from environment variables
+import re  # validates city names typed by users
 from getpass import getpass  # hides keys while they are typed
 
 from dotenv import load_dotenv  # loads API keys from the git-ignored .env file
@@ -24,9 +25,15 @@ WEBEX_API_URL = "https://webexapis.com/v1"
 GEOCODING_API_URL = "https://api.openweathermap.org/geo/1.0"
 WEATHER_API_URL = "https://api.openweathermap.org/data/2.5/weather"
 ISS_API_URL = "http://api.open-notify.org/iss-now.json"  # Open Notify only offers HTTP
+ISS_BACKUP_API_URL = "https://api.wheretheiss.at/v1/satellites/25544"  # 25544 = the ISS's NORAD ID
 
 REQUEST_TIMEOUT = 10  # seconds to wait for any API before giving up
+ISS_TIMEOUT = 5  # shorter wait for Open Notify, so the backup ISS API is tried sooner
 POLL_INTERVAL = 5  # seconds between checks for new Webex messages
+
+MAX_CITY_LENGTH = 85
+# Letters in any language, separated by spaces, commas, full stops, apostrophes or hyphens
+CITY_PATTERN = re.compile(r"[^\W\d_]+(?:[ ,.'’-]+[^\W\d_]+)*\.?")
 
 # =========================
 # CONFIGURATION FUNCTIONS
@@ -136,7 +143,12 @@ def send_message(token, room_id, message):
         "roomId": room_id,
         "text": message
     }
-    response = requests.post(url, headers=headers, data=json.dumps(data), timeout=REQUEST_TIMEOUT)
+    try:
+        response = requests.post(url, headers=headers, data=json.dumps(data), timeout=REQUEST_TIMEOUT)
+    except requests.RequestException as error:
+        # A failed reply must not crash the bot; the next command can still succeed
+        print("Could not send message:", type(error).__name__)
+        return None
 
     if response.status_code != 200:
         print("Error sending message:", response.status_code)
@@ -178,7 +190,8 @@ def get_current_weather(lat, lon, api_key):
 def get_weather(city, api_key):
     location = get_city_coordinates(city, api_key)
 
-    if not location:
+    # A usable geocoding result must include coordinates
+    if not location or location.get("lat") is None or location.get("lon") is None:
         return f"Sorry, I couldn't find a city called '{city}'. Try adding a country code, e.g. /weather Paris,FR"
 
     weather = get_current_weather(location["lat"], location["lon"], api_key)
@@ -186,12 +199,15 @@ def get_weather(city, api_key):
     if not weather:
         return "Sorry, the weather data could not be retrieved right now. Please try again later."
 
+    # Read every field with .get() so a missing value shows as N/A instead of crashing
+    conditions = (weather.get("weather") or [{}])[0]
+    readings = weather.get("main", {})
     return (
-        f"Weather for {location['name']}, {location['country']}\n"
-        f"Temperature: {weather['main']['temp']}°C\n"
-        f"Conditions: {weather['weather'][0]['description']}\n"
-        f"Humidity: {weather['main']['humidity']}%\n"
-        f"Wind speed: {weather['wind']['speed']} m/s\n"
+        f"Weather for {format_place(location)}\n"
+        f"Temperature: {format_value(readings.get('temp'), '°C')}\n"
+        f"Conditions: {conditions.get('description', 'Unknown')}\n"
+        f"Humidity: {format_value(readings.get('humidity'), '%', decimals=0)}\n"
+        f"Wind speed: {format_value(weather.get('wind', {}).get('speed'), ' m/s')}\n"
         f"Stargazing: {assess_stargazing(weather)}"
     )
 
@@ -254,33 +270,43 @@ def reverse_geocode(lat, lon, api_key):
 def get_iss_location(api_key):
     url = ISS_API_URL
 
-    response = requests.get(url, timeout=REQUEST_TIMEOUT)
+    try:
+        response = requests.get(url, timeout=ISS_TIMEOUT)
+    except requests.RequestException as error:
+        print("Open Notify ISS API unreachable:", type(error).__name__)
+        response = None
 
-    if response.status_code != 200:
-        return "Sorry, the ISS location could not be retrieved right now. Please try again shortly."
+    if response is not None and response.status_code == 200:
+        data = response.json()
+    else:
+        # Open Notify is volunteer-run and sometimes times out, so try a second provider
+        data = get_iss_backup_position()
+        if data is None:
+            return "Sorry, the ISS location could not be retrieved right now. Please try again shortly."
 
-    data = response.json()
-
-    # Open Notify returns the coordinates as strings, e.g. "51.5072"
-    lat = float(data["iss_position"]["latitude"])
-    lon = float(data["iss_position"]["longitude"])
-    timestamp = data["timestamp"]
+    try:
+        # Open Notify returns the coordinates as strings, e.g. "51.5072"
+        lat = float(data["iss_position"]["latitude"])
+        lon = float(data["iss_position"]["longitude"])
+    except (KeyError, TypeError, ValueError):
+        return "Sorry, the ISS service returned incomplete data. Please try again shortly."
 
     location = reverse_geocode(lat, lon, api_key)
 
     place = "Over Ocean / No Nearby City"
 
     if location:
-        place = f"{location['name']}, {location['country']}"
+        place = format_place(location)
 
     # Weather at the point on Earth directly below the ISS
     weather = get_current_weather(lat, lon, api_key)
-    conditions = "unavailable"
+    conditions = "Unavailable"
     if weather:
-        conditions = f"{weather['weather'][0]['description']}, {weather['main']['temp']}°C"
+        description = (weather.get("weather") or [{}])[0].get("description", "Unknown")
+        conditions = f"{description}, {format_value(weather.get('main', {}).get('temp'), '°C')}"
 
     return (
-        f"ISS location at {epoch_to_utc(timestamp)}\n"
+        f"ISS location at {epoch_to_utc(data.get('timestamp'))}\n"
         f"Latitude: {lat}\n"
         f"Longitude: {lon}\n"
         f"Location: {place}\n"
@@ -288,9 +314,58 @@ def get_iss_location(api_key):
     )
 
 
+def get_iss_backup_position():
+    # Backup source: the "Where the ISS at?" API (HTTPS, no key, numeric coordinates)
+    try:
+        response = requests.get(ISS_BACKUP_API_URL, timeout=REQUEST_TIMEOUT)
+    except requests.RequestException as error:
+        print("Backup ISS API unreachable:", type(error).__name__)
+        return None
+
+    if response.status_code != 200:
+        print("Backup ISS API error:", response.status_code)
+        return None
+
+    # Reshape the reply into Open Notify's format so get_iss_location() handles both the same way
+    data = response.json()
+    return {
+        "timestamp": data.get("timestamp"),
+        "iss_position": {"latitude": data.get("latitude"), "longitude": data.get("longitude")},
+    }
+
+
 def epoch_to_utc(timestamp):
     # time.gmtime() turns Unix epoch seconds into a UTC struct_time; strftime() formats it
+    if timestamp is None:
+        return "Unknown time"
     return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(timestamp))
+
+# =========================
+# DATA HANDLING HELPERS
+# =========================
+def format_value(value, unit="", decimals=1):
+    # Show a reading with its unit, or N/A when the API did not provide it
+    if value is None:
+        return "N/A"
+    try:
+        return f"{float(value):.{decimals}f}{unit}"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+def format_place(location):
+    # Join whichever of name, state and country the geocoding API returned
+    parts = [location.get("name"), location.get("state"), location.get("country")]
+    return ", ".join(part for part in parts if part) or "Unknown location"
+
+
+def validate_city(city, command):
+    # Return an error message for an unusable city name, or None if it looks valid
+    if not city:
+        return f"Usage: {command} <city>, e.g. {command} London,GB"
+    if len(city) > MAX_CITY_LENGTH or not CITY_PATTERN.fullmatch(city):
+        return "Please send a plain city name using letters, spaces, commas, hyphens or apostrophes, e.g. London,GB"
+    return None
 
 # =========================
 # MAIN BOT LOGIC
@@ -307,7 +382,12 @@ def main():
         os.getenv("OPENWEATHER_API_KEY")
     )
 
-    rooms = get_rooms(token)
+    try:
+        rooms = get_rooms(token)
+    except requests.RequestException as error:
+        # Only the error type is printed: request errors can include the URL and key
+        print("Could not reach Webex:", type(error).__name__)
+        rooms = []
 
     if not rooms:
         print("No Webex rooms found. Check your access token and network connection.")
@@ -317,7 +397,11 @@ def main():
     room_id = select_room(rooms)
 
     # Remember the newest existing message so old messages are not treated as commands
-    last_message_id, _ = get_latest_message(token, room_id)
+    try:
+        last_message_id, _ = get_latest_message(token, room_id)
+    except requests.RequestException as error:
+        print("Could not reach Webex:", type(error).__name__)
+        return
     print("AstroBot is listening for commands. Press Ctrl+C to stop.")
 
     while True:
@@ -325,11 +409,17 @@ def main():
         # Sleeping at the top of the loop means 'continue' can never skip the delay
         time.sleep(POLL_INTERVAL)
 
-        message_id, message_text = get_latest_message(token, room_id)
+        try:
+            message_id, message_text = get_latest_message(token, room_id)
+        except requests.RequestException as error:
+            # A network blip should not stop the bot; try again on the next poll
+            print("Could not reach Webex:", type(error).__name__)
+            continue
 
         if message_id and message_id != last_message_id:
 
             last_message_id = message_id
+            message_text = message_text.strip()
 
             print(f"Received: {message_text}")
 
@@ -337,28 +427,35 @@ def main():
             if not message_text.startswith("/"):
                 continue
 
-            if message_text.lower() == "/help":
-                reply = "AstroBot commands:\n/weather <city>\n/iss\n/help\n/quit"
+            # Split e.g. "/weather London,GB" into the command word and its argument
+            parts = message_text.split(maxsplit=1)
+            command = parts[0].lower()
+            argument = parts[1].strip() if len(parts) > 1 else ""
 
-            elif message_text.lower().startswith("/weather"):
+            try:
+                if command == "/help":
+                    reply = "AstroBot commands:\n/weather <city>\n/iss\n/help\n/quit"
 
-                parts = message_text.split(maxsplit=1)
+                elif command == "/weather":
+                    # validate_city() returns an error message, or None so the lookup runs
+                    reply = validate_city(argument, command) or get_weather(argument, weather_key)
 
-                if len(parts) < 2:
-                    reply = "Usage: /weather <city>"
+                elif command == "/iss":
+                    reply = get_iss_location(weather_key)
+
+                elif command == "/quit":
+                    send_message(token, room_id, "AstroBot shutting down.")
+                    break
+
                 else:
-                    city = parts[1]
-                    reply = get_weather(city, weather_key)
+                    reply = "Unknown command. Use /help"
 
-            elif message_text.lower() == "/iss":
-                reply = get_iss_location(weather_key)
-
-            elif message_text.lower() == "/quit":
-                send_message(token, room_id, "AstroBot shutting down.")
-                break
-
-            else:
-                reply = "Unknown command. Use /help"
+            except requests.RequestException as error:
+                print("API request failed:", type(error).__name__)
+                reply = "Sorry, I couldn't reach one of the data services. Please try again in a minute."
+            except (KeyError, TypeError, ValueError) as error:
+                print("Unexpected API data:", type(error).__name__, error)
+                reply = "Sorry, a data service sent an unexpected response. Please try again later."
 
             # Replies are posted with the user's own token, so they come back as the newest
             # message on the next poll; remembering the reply's ID stops the bot answering itself
@@ -368,4 +465,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nAstroBot stopped.")
