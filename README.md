@@ -223,16 +223,73 @@ print(time.strftime("%Y-%m-%d %H:%M:%S UTC", utc_time))   # -> 2026-10-23 18:28:
 
 | Criteria | Details |
 |---------|---------|
-| API Provider | '_________' |
-| API Base URL | `_______________________________` |
-| Endpoint | `_______________________________` |
-| Authentication method | `_______________________________` |
-| Required query parameters | `_______________________________` |
-| Sample JSON response (formatted example) |  
+| API Provider | **Open-Meteo Forecast API**: free, open-source weather and astronomy data, used for the new `/sky <city>` command |
+| API Base URL | `https://api.open-meteo.com/v1` |
+| Endpoint | `GET /forecast` |
+| Authentication method | None for non-commercial use. An `apikey` is only needed for the commercial `customer-` API. |
+| Required query parameters | `latitude` and `longitude`. AstroBot also sends `hourly=cloud_cover,visibility,precipitation_probability,is_day`, `daily=sunrise,sunset,moonrise,moonset,moon_phase`, `timezone=auto` (times in the city's local time; required when asking for daily values), `past_days=1` and `forecast_days=2`. |
+| Sample JSON response (formatted example) | Live response for London captured on 23 Oct 2026 (below), trimmed to three evening hours and one day |
+
+```json
+{
+  "latitude": 51.51147,
+  "longitude": -0.13078308,
+  "utc_offset_seconds": 3600,
+  "timezone": "Europe/London",
+  "timezone_abbreviation": "GMT+1",
+  "elevation": 16.0,
+  "hourly_units": { "time": "iso8601", "cloud_cover": "%", "visibility": "m", "precipitation_probability": "%", "is_day": "" },
+  "hourly": {
+    "time": ["2026-10-23T20:00", "2026-10-23T21:00", "2026-10-23T22:00"],
+    "cloud_cover": [78, 91, 66],
+    "visibility": [26840.0, 28260.0, 32020.0],
+    "precipitation_probability": [39, 20, 6],
+    "is_day": [0, 0, 0]
+  },
+  "daily_units": { "time": "iso8601", "sunrise": "iso8601", "sunset": "iso8601", "moonrise": "iso8601", "moonset": "iso8601", "moon_phase": "fraction" },
+  "daily": {
+    "time": ["2026-10-23"],
+    "sunrise": ["2026-10-23T07:38"],
+    "sunset": ["2026-10-23T17:50"],
+    "moonrise": ["2026-10-23T16:33"],
+    "moonset": ["2026-10-23T04:06"],
+    "moon_phase": [0.403]
+  }
+}
 ```
 
+**Why Open-Meteo?** It was one of the suggested APIs and is the one most useful for *planning* observation nights:
+
+- It forecasts **hourly cloud cover**, which matters most for stargazing. OpenWeather's free current-weather call only describes the present moment.
+- It provides **moonrise, moonset and moon phase**. A bright Moon washes out faint galaxies and nebulae, so these decide what is worth observing.
+- It needs **no API key**, so there is no extra secret to manage and nothing to sign up for. It is reached over HTTPS.
+- `/sky` reuses the OpenWeather geocoding call (`get_city_coordinates()`) to turn a city name into coordinates, so the extension fits into the existing structure.
+
+**Findings from testing the data**
+
+- Hourly `time` values are **local clock times without an offset** (with `timezone=auto`), so the bot compares them with the city's local "now", computed from `utc_offset_seconds`.
+- `moon_phase` is not documented on the docs page. Fetching a month of values showed it climbs steadily from 0 to 1 through the lunar cycle: it wrapped from 0.993 to 0.026 at the 10 Oct 2026 new moon and passed 0.5 at the 26 Oct full moon. So **0 = new, 0.25 = first quarter, 0.5 = full, 0.75 = last quarter**, and the illuminated fraction is (1 − cos 2π·phase) / 2. For 0.403 that gives about 91%.
+- `moonrise`/`moonset` can be `null` on days when the Moon does not rise or set, so the bot skips missing values.
+- `is_day` (1 or 0) marks the dark hours. In places with the midnight sun no hour is dark, and the bot says so instead of reporting an empty forecast.
+
+**How `/sky` turns the data into advice** (`ASTRONOMY EXTENSION FUNCTIONS` in `astro_bot.py`)
+
+1. `get_night_hours()` takes the dark hours from now until the next sunrise. If fewer than 3 are left (a request at dawn), it moves on to the next night.
+2. `find_best_window()` finds the longest run of hours with cloud cover of 30% or less and a rain chance under 50%.
+3. `describe_moon()` names the phase and works out how much of the Moon is lit. `describe_moon_visibility()` reports moonrise and moonset during the dark hours.
+4. `assess_sky()` gives a Good, Fair or Poor verdict from the average cloud cover. It then adds moonlight advice (dark skies for galaxies, or a bright Moon that suits the Moon and planets) and a warning if the forecast visibility drops below 2 km (mist or fog).
+
+Example reply (live, 23 Oct 2026):
+
+```text
+🔭 Stargazing forecast for London, England, GB, night of Fri 23 Oct
+🌇 Sunset 17:50 · 🌅 Sunrise 07:39 (local time)
+☁️ Cloud after dark: 48% on average (lowest 0% at 02:00)
+✨ Best viewing window: 00:00-04:00 (cloud 30% or less)
+🌧️ Highest chance of rain: 39%
+🌔 Moon: Waxing Gibbous, 91% lit, sets 05:26
+🔭 Verdict: ⚠️ Fair - partly cloudy with clear spells; the bright Moon favours the Moon and planets over faint galaxies
 ```
-|
 
 --- 
 

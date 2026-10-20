@@ -197,6 +197,88 @@ class IssTests(unittest.TestCase):
         self.assertEqual(bot.epoch_to_utc(None), "Unknown time")
 
 
+def make_forecast(cloud=lambda hour: 10, always_day=False):
+    """Two days of Open-Meteo data for London (local times), dark from 18:00 to 07:59."""
+    start = bot.datetime(2026, 10, 23)
+    hours = [start + bot.timedelta(hours=n) for n in range(48)]
+    return {
+        "utc_offset_seconds": 3600,
+        "hourly": {
+            "time": [hour.strftime("%Y-%m-%dT%H:%M") for hour in hours],
+            "is_day": [1 if always_day or 8 <= hour.hour < 18 else 0 for hour in hours],
+            "cloud_cover": [cloud(hour) for hour in hours],
+            "visibility": [24000 for _ in hours],
+            "precipitation_probability": [0 for _ in hours],
+        },
+        "daily": {
+            "time": ["2026-10-23", "2026-10-24"],
+            "sunrise": ["2026-10-23T07:38", "2026-10-24T07:39"],
+            "sunset": ["2026-10-23T17:50", "2026-10-24T17:48"],
+            "moonrise": ["2026-10-23T16:33", "2026-10-24T16:45"],
+            "moonset": ["2026-10-23T04:06", "2026-10-24T05:26"],
+            "moon_phase": [0.403, 0.437],
+        },
+    }
+
+
+class SkyExtensionTests(unittest.TestCase):
+    NOON = bot.datetime(2026, 10, 23, 12, 0)
+
+    def test_night_runs_from_dark_until_sunrise(self):
+        night = bot.get_night_hours(make_forecast(), now=self.NOON)
+        self.assertEqual(night[0]["time"], bot.datetime(2026, 10, 23, 18))
+        self.assertEqual(night[-1]["time"], bot.datetime(2026, 10, 24, 7))
+
+    def test_dawn_request_forecasts_the_next_night(self):
+        night = bot.get_night_hours(make_forecast(), now=bot.datetime(2026, 10, 23, 6, 30))
+        self.assertEqual(night[0]["time"], bot.datetime(2026, 10, 23, 18))
+
+    def test_late_request_starts_at_the_current_hour(self):
+        night = bot.get_night_hours(make_forecast(), now=bot.datetime(2026, 10, 23, 23, 20))
+        self.assertEqual(night[0]["time"], bot.datetime(2026, 10, 23, 23))
+
+    def test_moon_phases_and_illumination(self):
+        for phase, name, lit in [(0.0, "New Moon", 0.0), (0.25, "First Quarter", 0.5),
+                                 (0.5, "Full Moon", 1.0), (0.75, "Last Quarter", 0.5), (0.403, "Waxing Gibbous", 0.91)]:
+            with self.subTest(phase=phase):
+                described_name, _, illumination = bot.describe_moon(phase)
+                self.assertEqual(described_name, name)
+                self.assertAlmostEqual(illumination, lit, places=2)
+        self.assertEqual(bot.describe_moon(None)[0], "Unknown phase")
+
+    def test_best_window_is_longest_clear_run(self):
+        cloudy_until_midnight = lambda hour: 80 if hour.hour >= 18 else 10
+        night = bot.get_night_hours(make_forecast(cloud=cloudy_until_midnight), now=self.NOON)
+        window = bot.find_best_window(night)
+        self.assertEqual((window[0]["time"].hour, window[-1]["time"].hour), (0, 7))
+
+    def test_sky_report(self):
+        real_night_hours = bot.get_night_hours
+        responses = route({"/geo/1.0/direct": FakeResponse(200, [LONDON]),
+                           "open-meteo": FakeResponse(200, make_forecast())})
+        with mock.patch.object(bot.requests, "get", side_effect=responses) as get, \
+                mock.patch.object(bot, "get_night_hours", lambda forecast: real_night_hours(forecast, now=self.NOON)):
+            reply = bot.get_sky_forecast("London", "KEY")
+        self.assertIn("night of Fri 23 Oct", reply)
+        self.assertIn("Sunset 17:50 · 🌅 Sunrise 07:39", reply)
+        self.assertIn("Best viewing window: 18:00-07:39", reply)
+        self.assertIn("Waxing Gibbous, 91% lit, sets 05:26", reply)
+        self.assertIn("Verdict: ✅ Good - mostly clear", reply)
+        params = get.call_args.kwargs["params"]
+        self.assertEqual((params["timezone"], params["latitude"]), ("auto", 51.5073))
+
+    def test_midnight_sun(self):
+        responses = route({"/geo/1.0/direct": FakeResponse(200, [LONDON]),
+                           "open-meteo": FakeResponse(200, make_forecast(always_day=True))})
+        with mock.patch.object(bot.requests, "get", side_effect=responses):
+            self.assertIn("midnight sun", bot.get_sky_forecast("London", "KEY"))
+
+    def test_open_meteo_error(self):
+        responses = route({"/geo/1.0/direct": FakeResponse(200, [LONDON]), "open-meteo": FakeResponse(503)})
+        with mock.patch.object(bot.requests, "get", side_effect=responses), contextlib.redirect_stdout(io.StringIO()):
+            self.assertIn("could not be retrieved", bot.get_sky_forecast("London", "KEY"))
+
+
 class FormattingAndValidationTests(unittest.TestCase):
     def test_format_helpers(self):
         self.assertEqual(bot.format_value(None), "N/A")
@@ -265,14 +347,15 @@ def run_bot(room, extra_get=None):
 
 class MainLoopTests(unittest.TestCase):
     def test_commands_are_answered_once_and_chat_is_ignored(self):
-        room = FakeWebexRoom(["hello", "/help", None, None, "/WEATHER", "/marsrover", "/quit"])
+        room = FakeWebexRoom(["hello", "/help", None, None, "/WEATHER", "/sky", "/marsrover", "/quit"])
         console = run_bot(room)
         replies = room.bot_replies()
-        self.assertEqual(len(replies), 4, replies)  # help, usage, unknown, shutdown - nothing twice
+        self.assertEqual(len(replies), 5, replies)  # help, 2x usage, unknown, shutdown - nothing twice
         self.assertTrue(replies[0].startswith("🔭 AstroBot commands"))
         self.assertIn("Usage: /weather <city>", replies[1])
-        self.assertIn("Unknown command", replies[2])
-        self.assertIn("shutting down", replies[3])
+        self.assertIn("Usage: /sky <city>", replies[2])
+        self.assertIn("Unknown command", replies[3])
+        self.assertIn("shutting down", replies[4])
         self.assertNotIn("Received: 🔭", console)  # the bot never reads back its own replies
 
     def test_own_reply_that_looks_like_a_command_is_not_processed(self):

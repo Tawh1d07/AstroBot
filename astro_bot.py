@@ -12,6 +12,7 @@ import json  # encodes the Webex message body as JSON
 import time  # polling delay and epoch -> human-readable time conversion
 from datetime import datetime, timedelta, timezone  # local times for weather reports
 
+import math  # moon illumination from the moon phase
 import os  # reads API keys from environment variables
 import re  # validates city names typed by users
 from getpass import getpass  # hides keys while they are typed
@@ -26,10 +27,14 @@ GEOCODING_API_URL = "https://api.openweathermap.org/geo/1.0"
 WEATHER_API_URL = "https://api.openweathermap.org/data/2.5/weather"
 ISS_API_URL = "http://api.open-notify.org/iss-now.json"  # Open Notify only offers HTTP
 ISS_BACKUP_API_URL = "https://api.wheretheiss.at/v1/satellites/25544"  # 25544 = the ISS's NORAD ID
+SKY_API_URL = "https://api.open-meteo.com/v1/forecast"  # /sky extension (no key needed)
 
 REQUEST_TIMEOUT = 10  # seconds to wait for any API before giving up
 ISS_TIMEOUT = 5  # shorter wait for Open Notify, so the backup ISS API is tried sooner
 POLL_INTERVAL = 5  # seconds between checks for new Webex messages
+
+CLEAR_SKY_MAX_CLOUD = 30  # % cloud cover still counted as a clear spell for /sky
+MIN_NIGHT_HOURS = 3  # if less darkness than this is left (e.g. at dawn), /sky forecasts the next night
 
 MAX_CITY_LENGTH = 85
 # Letters in any language, separated by spaces, commas, full stops, apostrophes or hyphens
@@ -324,6 +329,169 @@ def epoch_to_utc(timestamp):
     return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(timestamp))
 
 # =========================
+# ASTRONOMY EXTENSION FUNCTIONS (/sky)
+# =========================
+MOON_PHASES = [
+    ("New Moon", "🌑"), ("Waxing Crescent", "🌒"), ("First Quarter", "🌓"), ("Waxing Gibbous", "🌔"),
+    ("Full Moon", "🌕"), ("Waning Gibbous", "🌖"), ("Last Quarter", "🌗"), ("Waning Crescent", "🌘"),
+]
+
+
+def get_sky_forecast(city, api_key):
+    # Reuse the OpenWeather geocoder to turn the city name into coordinates
+    location = get_city_coordinates(city, api_key)
+
+    if not location or location.get("lat") is None or location.get("lon") is None:
+        return f"❌ I couldn't find a city called '{city}'. Try adding a country code, e.g. `/sky Paris,FR`"
+
+    url = SKY_API_URL
+    params = {
+        "latitude": location["lat"],
+        "longitude": location["lon"],
+        "hourly": "cloud_cover,visibility,precipitation_probability,is_day",
+        "daily": "sunrise,sunset,moonrise,moonset,moon_phase",
+        "timezone": "auto",  # times come back in the city's own local time
+        "past_days": 1,  # yesterday's sunset and moonrise are needed for requests after midnight
+        "forecast_days": 2,
+    }
+
+    response = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+
+    if response.status_code != 200:
+        print("Open-Meteo API error:", response.status_code)
+        return "⚠️ Sorry, the stargazing forecast could not be retrieved right now. Please try again later."
+
+    forecast = response.json()
+    night = get_night_hours(forecast)
+
+    if not night:
+        return f"☀️ It will not get dark in {format_place(location)} before tomorrow (midnight sun), so there is no stargazing window."
+
+    return format_sky_report(location, forecast, night)
+
+
+def get_night_hours(forecast, now=None):
+    # The coming night's dark hours: from now (or sunset) until the sun rises again
+    hourly = forecast.get("hourly", {})
+    if now is None:
+        # Open-Meteo times are the city's local clock times, so compare with its local time now
+        offset = timedelta(seconds=forecast.get("utc_offset_seconds") or 0)
+        now = (datetime.now(timezone.utc) + offset).replace(tzinfo=None)
+    this_hour = now.replace(minute=0, second=0, microsecond=0)
+    moon_events = get_moon_events(forecast.get("daily", {}))
+
+    # Group the remaining dark hours into nights (runs of hours with is_day == 0)
+    nights, current = [], []
+    for index, stamp in enumerate(hourly.get("time", [])):
+        hour = datetime.fromisoformat(stamp)
+        if hour < this_hour:
+            continue
+        if hourly_value(hourly, "is_day", index) == 1:
+            if current:
+                nights.append(current)
+                current = []
+            continue
+        current.append({
+            "time": hour,
+            "cloud": hourly_value(hourly, "cloud_cover", index),
+            "visibility": hourly_value(hourly, "visibility", index),
+            "rain": hourly_value(hourly, "precipitation_probability", index),
+            "moon_up": is_moon_up(moon_events, hour),
+        })
+    if current:
+        nights.append(current)
+
+    # At dawn only a few dark hours are left, so forecast the next night instead
+    if len(nights) > 1 and len(nights[0]) < MIN_NIGHT_HOURS:
+        return nights[1]
+    return nights[0] if nights else []
+
+
+def hourly_value(hourly, key, index):
+    # One value from an hourly list, or None if the list is missing or too short
+    values = hourly.get(key) or []
+    return values[index] if index < len(values) else None
+
+
+def get_moon_events(daily):
+    # Sorted (time, is_rise) pairs; Open-Meteo gives null on days without a moonrise or moonset
+    events = []
+    for key, is_rise in (("moonrise", True), ("moonset", False)):
+        for stamp in daily.get(key) or []:
+            if stamp:
+                events.append((datetime.fromisoformat(stamp), is_rise))
+    return sorted(events)
+
+
+def is_moon_up(events, when):
+    # The Moon is up if its last rise/set before 'when' was a rise
+    earlier = [is_rise for event_time, is_rise in events if event_time <= when]
+    if earlier:
+        return earlier[-1]
+    later = [is_rise for event_time, is_rise in events if event_time > when]
+    return (not later[0]) if later else None
+
+
+def get_moon_phase(forecast, night):
+    # Open-Meteo's daily moon_phase for the date tonight's dark hours begin
+    daily = forecast.get("daily", {})
+    dates, phases = daily.get("time", []), daily.get("moon_phase", [])
+    start_date = night[0]["time"].date().isoformat()
+    if start_date in dates:
+        index = dates.index(start_date)
+        if index < len(phases):
+            return phases[index]
+    return None
+
+
+def describe_moon(phase):
+    # moon_phase runs 0 -> 1 through the cycle: 0 = new, 0.25 = first quarter, 0.5 = full, 0.75 = last quarter
+    if phase is None:
+        return "Unknown phase", "🌙", None
+    name, emoji = MOON_PHASES[int(phase * 8 + 0.5) % 8]
+    illumination = (1 - math.cos(2 * math.pi * phase)) / 2  # fraction of the Moon's disc that is lit
+    return name, emoji, illumination
+
+
+def find_best_window(night):
+    # Longest run of consecutive dark hours with little cloud and a low chance of rain
+    best, current = [], []
+    for hour in night:
+        clear = hour["cloud"] is not None and hour["cloud"] <= CLEAR_SKY_MAX_CLOUD and (hour["rain"] or 0) < 50
+        current = current + [hour] if clear else []
+        if len(current) > len(best):
+            best = current
+    return best
+
+
+def assess_sky(night, illumination):
+    # Overall verdict from the average cloud cover, then advice based on moonlight and fog
+    clouds = [hour["cloud"] for hour in night if hour["cloud"] is not None]
+    if not clouds:
+        return "❔ Unknown - no cloud forecast"
+    average = sum(clouds) / len(clouds)
+    if average <= CLEAR_SKY_MAX_CLOUD:
+        verdict = "✅ Good - mostly clear"
+    elif average <= 60:
+        verdict = "⚠️ Fair - partly cloudy"
+        if find_best_window(night):
+            verdict += " with clear spells"
+    else:
+        verdict = "❌ Poor - mostly cloudy"
+
+    if average <= 60:
+        moon_free = [hour for hour in night if hour["moon_up"] is False]
+        if (illumination is not None and illumination <= 0.25) or len(moon_free) >= 0.75 * len(night):
+            verdict += "; dark skies, great for galaxies, nebulae and the Milky Way"
+        elif illumination is not None and illumination >= 0.6:
+            verdict += "; the bright Moon favours the Moon and planets over faint galaxies"
+
+    visibilities = [hour["visibility"] for hour in night if hour["visibility"] is not None]
+    if visibilities and min(visibilities) < 2000:
+        verdict += "; mist or fog is possible"
+    return verdict
+
+# =========================
 # FORMATTING FUNCTIONS
 # =========================
 # These build the chat replies. Lines are joined with "\n"; send_message() converts
@@ -410,12 +578,85 @@ def format_iss_report(lat, lon, timestamp, place, weather):
     return "\n".join(lines)
 
 
+def format_clock(moment):
+    # Local clock time such as 21:00, or N/A
+    return moment.strftime("%H:%M") if moment else "N/A"
+
+
+def format_hour_range(hours, latest_end=None):
+    # e.g. 22:00-02:00 for hourly slots starting at 22:00, 23:00, 00:00 and 01:00,
+    # ending no later than latest_end (sunrise) because the last slot may only be partly dark
+    end = hours[-1]["time"] + timedelta(hours=1)
+    if latest_end is not None:
+        end = min(end, latest_end)
+    return f"{format_clock(hours[0]['time'])}-{format_clock(end)}"
+
+
+def describe_moon_visibility(moon_events, start, end):
+    # Moonrise/moonset during the dark period, e.g. "sets 05:26" - the sky is darkest while it is down
+    changes = [f"{'rises' if is_rise else 'sets'} {format_clock(moment)}"
+               for moment, is_rise in moon_events if start < moment < end]
+    if changes:
+        return ", ".join(changes)
+    up = is_moon_up(moon_events, start)
+    if up is None:
+        return "rise and set times unavailable"
+    return "above the horizon all night" if up else "below the horizon all night"
+
+
+def format_sky_report(location, forecast, night):
+    # Reply for /sky <city>: the night's cloud, best viewing window, Moon and an overall verdict
+    daily = forecast.get("daily", {})
+    sunsets = [datetime.fromisoformat(s) for s in daily.get("sunset") or [] if s]
+    sunrises = [datetime.fromisoformat(s) for s in daily.get("sunrise") or [] if s]
+    # The sunset that starts this night's darkness and the sunrise that ends it
+    sunset = max((t for t in sunsets if t <= night[0]["time"] + timedelta(hours=1)), default=None)
+    sunrise = min((t for t in sunrises if t >= night[-1]["time"]), default=None)
+    night_of = (sunset or night[0]["time"]).strftime("%a %d %b")
+    dark_from = max(sunset, night[0]["time"]) if sunset else night[0]["time"]
+    dark_until = sunrise or night[-1]["time"] + timedelta(hours=1)
+
+    cloudy_hours = [hour for hour in night if hour["cloud"] is not None]
+    if cloudy_hours:
+        average = sum(hour["cloud"] for hour in cloudy_hours) / len(cloudy_hours)
+        clearest = min(cloudy_hours, key=lambda hour: hour["cloud"])
+        cloud_line = (f"☁️ Cloud after dark: {average:.0f}% on average "
+                      f"(lowest {clearest['cloud']}% at {format_clock(clearest['time'])})")
+    else:
+        cloud_line = "☁️ Cloud after dark: N/A"
+
+    window = find_best_window(night)
+    if window:
+        window_line = (f"✨ Best viewing window: {format_hour_range(window, dark_until)} "
+                       f"(cloud {CLEAR_SKY_MAX_CLOUD}% or less)")
+    else:
+        window_line = f"✨ Best viewing window: none - cloud stays above {CLEAR_SKY_MAX_CLOUD}% all night"
+
+    rain_chances = [hour["rain"] for hour in night if hour["rain"] is not None]
+    phase_name, moon_emoji, illumination = describe_moon(get_moon_phase(forecast, night))
+    lit = f", {illumination:.0%} lit" if illumination is not None else ""
+
+    moon_events = get_moon_events(daily)
+
+    lines = [
+        f"🔭 **Stargazing forecast for {format_place(location)}, night of {night_of}**",
+        f"🌇 Sunset {format_clock(sunset)} · 🌅 Sunrise {format_clock(sunrise)} (local time)",
+        cloud_line,
+        window_line,
+        f"🌧️ Highest chance of rain: {format_value(max(rain_chances, default=None), '%', decimals=0)}",
+        f"{moon_emoji} Moon: {phase_name}{lit}, {describe_moon_visibility(moon_events, dark_from, dark_until)}",
+        f"🔭 **Verdict: {assess_sky(night, illumination)}**",
+    ]
+    return "\n".join(lines)
+
+
 def format_help():
     # Reply for /help (starts with an emoji, not "/", so it can never look like a command)
     return "\n".join([
         "🔭 **AstroBot commands**",
         "• `/weather <city>` - current weather and a stargazing verdict, e.g. `/weather London,GB`",
         "• `/iss` - where the International Space Station is right now",
+        "• `/sky <city>` - tonight's stargazing forecast: cloud, best viewing window and the Moon",
         "• `/help` - show this list",
         "• `/quit` - stop AstroBot",
     ])
@@ -506,6 +747,10 @@ def main():
 
                 elif command == "/iss":
                     reply = get_iss_location(weather_key)
+
+                elif command == "/sky":
+                    # Extension feature: tonight's stargazing forecast from Open-Meteo
+                    reply = validate_city(argument, command) or get_sky_forecast(argument, weather_key)
 
                 elif command == "/quit":
                     send_message(token, room_id, "🔭 AstroBot is shutting down. Clear skies!")
