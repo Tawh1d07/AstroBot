@@ -365,7 +365,8 @@ def get_sky_forecast(city, api_key):
     night = get_night_hours(forecast)
 
     if not night:
-        return f"☀️ It will not get dark in {format_place(location)} before tomorrow (midnight sun), so there is no stargazing window."
+        return (f"☀️ The sun does not set in {format_place(location)} during the forecast period "
+                "(midnight sun), so there is no stargazing window.")
 
     return format_sky_report(location, forecast, night)
 
@@ -669,7 +670,8 @@ def validate_city(city, command):
     if not city:
         return f"ℹ️ Usage: `{command} <city>`, e.g. `{command} London,GB`"
     if len(city) > MAX_CITY_LENGTH or not CITY_PATTERN.fullmatch(city):
-        return "⚠️ Please send a plain city name using letters, spaces, commas, hyphens or apostrophes, e.g. `London,GB`"
+        return ("⚠️ Please send a plain city name using letters, spaces, commas, hyphens or apostrophes, "
+                "e.g. `London,GB`")
     return None
 
 # =========================
