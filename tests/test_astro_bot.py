@@ -221,6 +221,14 @@ def make_forecast(cloud=lambda hour: 10, always_day=False):
     }
 
 
+def sky_reply(forecast, now):
+    """Run get_sky_forecast() with fake geocoding and Open-Meteo responses at a fixed local time."""
+    responses = route({"/geo/1.0/direct": FakeResponse(200, [LONDON]), "open-meteo": FakeResponse(200, forecast)})
+    with mock.patch.object(bot.requests, "get", side_effect=responses), \
+            mock.patch.object(bot, "local_now", return_value=now), contextlib.redirect_stdout(io.StringIO()):
+        return bot.get_sky_forecast("London", "KEY")
+
+
 class SkyExtensionTests(unittest.TestCase):
     NOON = bot.datetime(2026, 10, 23, 12, 0)
 
@@ -253,11 +261,10 @@ class SkyExtensionTests(unittest.TestCase):
         self.assertEqual((window[0]["time"].hour, window[-1]["time"].hour), (0, 7))
 
     def test_sky_report(self):
-        real_night_hours = bot.get_night_hours
         responses = route({"/geo/1.0/direct": FakeResponse(200, [LONDON]),
                            "open-meteo": FakeResponse(200, make_forecast())})
         with mock.patch.object(bot.requests, "get", side_effect=responses) as get, \
-                mock.patch.object(bot, "get_night_hours", lambda forecast: real_night_hours(forecast, now=self.NOON)):
+                mock.patch.object(bot, "local_now", return_value=self.NOON):
             reply = bot.get_sky_forecast("London", "KEY")
         self.assertIn("night of Fri 23 Oct", reply)
         self.assertIn("Sunset 17:50 · 🌅 Sunrise 07:39", reply)
@@ -266,12 +273,6 @@ class SkyExtensionTests(unittest.TestCase):
         self.assertIn("Verdict: ✅ Good - mostly clear", reply)
         params = get.call_args.kwargs["params"]
         self.assertEqual((params["timezone"], params["latitude"]), ("auto", 51.5073))
-
-    def test_midnight_sun(self):
-        responses = route({"/geo/1.0/direct": FakeResponse(200, [LONDON]),
-                           "open-meteo": FakeResponse(200, make_forecast(always_day=True))})
-        with mock.patch.object(bot.requests, "get", side_effect=responses):
-            self.assertIn("midnight sun", bot.get_sky_forecast("London", "KEY"))
 
     def test_open_meteo_error(self):
         responses = route({"/geo/1.0/direct": FakeResponse(200, [LONDON]), "open-meteo": FakeResponse(503)})
@@ -325,6 +326,33 @@ class SkyReviewRegressionTests(unittest.TestCase):
         self.assertIn("above 30% in every hour with a forecast (3 hours have no data)", line)
         line = self.window_line(make_night(cloud=lambda n: None if n == 0 else 80))
         self.assertIn("(1 hour has no data)", line)
+
+    def test_missing_is_day_values_are_not_treated_as_dark(self):
+        noon = bot.datetime(2026, 10, 23, 12)
+        forecast = make_forecast()
+        forecast["hourly"]["is_day"] = [None] * 48
+        self.assertEqual(bot.get_night_hours(forecast, now=noon), [])
+        forecast = make_forecast()
+        forecast["hourly"]["is_day"][20] = None  # 20:00 has no day/night value
+        night_times = [hour["time"] for hour in bot.get_night_hours(forecast, now=noon)]
+        self.assertNotIn(bot.datetime(2026, 10, 23, 20), night_times)
+
+    def test_incomplete_forecast_is_not_reported_as_midnight_sun(self):
+        no_is_day = make_forecast(always_day=True)
+        del no_is_day["hourly"]["is_day"]
+        too_short = make_forecast(always_day=True)
+        too_short["hourly"] = {key: values[12:18] for key, values in too_short["hourly"].items()}  # 6 hours left
+        cases = {"empty hourly data": {"hourly": {}, "daily": {}}, "no is_day values": no_is_day,
+                 "only 6 hours of data": too_short, "not a JSON object": []}
+        for label, forecast in cases.items():
+            with self.subTest(label):
+                reply = sky_reply(forecast, now=bot.datetime(2026, 10, 23, 12))
+                self.assertIn("came back incomplete", reply)
+                self.assertNotIn("midnight sun", reply)
+
+    def test_complete_daylight_forecast_is_midnight_sun(self):
+        reply = sky_reply(make_forecast(always_day=True), now=bot.datetime(2026, 10, 23, 12))
+        self.assertIn("midnight sun", reply)
 
 
 class FormattingAndValidationTests(unittest.TestCase):

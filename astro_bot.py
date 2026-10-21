@@ -36,6 +36,7 @@ POLL_INTERVAL = 5  # seconds between checks for new Webex messages
 CLEAR_SKY_MAX_CLOUD = 30  # % cloud cover still counted as a clear spell for /sky
 RAIN_LIKELY_CHANCE = 50  # % chance of rain from which a /sky hour counts as wet
 MIN_NIGHT_HOURS = 3  # if less darkness than this is left (e.g. at dawn), /sky forecasts the next night
+MIN_FORECAST_HOURS = 24  # upcoming hours /sky needs, so a whole night (or a whole day of midnight sun) is covered
 
 MAX_CITY_LENGTH = 85
 # Letters in any language, separated by spaces, commas, full stops, apostrophes or hyphens
@@ -365,32 +366,61 @@ def get_sky_forecast(city, api_key):
         return "⚠️ Sorry, the stargazing forecast could not be retrieved right now. Please try again later."
 
     forecast = response.json()
-    night = get_night_hours(forecast)
+    now = local_now(forecast)
+
+    problem = find_forecast_problem(forecast, now)
+    if problem:
+        print("Open-Meteo forecast incomplete:", problem)
+        return ("⚠️ Sorry, the stargazing forecast came back incomplete, so I can't work out "
+                "tonight's dark hours. Please try again later.")
+
+    night = get_night_hours(forecast, now)
 
     if not night:
+        # The check above guarantees day/night data for every upcoming hour, so the sun really never sets
         return (f"☀️ The sun does not set in {format_place(location)} during the forecast period "
                 "(midnight sun), so there is no stargazing window.")
 
     return format_sky_report(location, forecast, night)
 
 
+def local_now(forecast):
+    # The city's local time now; Open-Meteo applies utc_offset_seconds to every timestamp it returns
+    offset = timedelta(seconds=forecast.get("utc_offset_seconds") or 0)
+    return (datetime.now(timezone.utc) + offset).replace(tzinfo=None)
+
+
+def find_forecast_problem(forecast, now):
+    # Why the forecast cannot be trusted to find dark hours, or None if it is complete enough
+    if not isinstance(forecast, dict):
+        return "the response is not a JSON object"
+    hourly = forecast.get("hourly") or {}
+    this_hour = now.replace(minute=0, second=0, microsecond=0)
+    upcoming = [index for index, stamp in enumerate(hourly.get("time") or [])
+                if datetime.fromisoformat(stamp) >= this_hour]
+    if len(upcoming) < MIN_FORECAST_HOURS:
+        return f"only {len(upcoming)} upcoming hours of data"
+    if any(hourly_value(hourly, "is_day", index) not in (0, 1) for index in upcoming):
+        return "day/night (is_day) values are missing"
+    return None
+
+
 def get_night_hours(forecast, now=None):
     # The coming night's dark hours: from now (or sunset) until the sun rises again
-    hourly = forecast.get("hourly", {})
+    hourly = forecast.get("hourly") or {}
     if now is None:
-        # Open-Meteo times are the city's local clock times, so compare with its local time now
-        offset = timedelta(seconds=forecast.get("utc_offset_seconds") or 0)
-        now = (datetime.now(timezone.utc) + offset).replace(tzinfo=None)
+        now = local_now(forecast)
     this_hour = now.replace(minute=0, second=0, microsecond=0)
-    moon_events = get_moon_events(forecast.get("daily", {}))
+    moon_events = get_moon_events(forecast.get("daily") or {})
 
     # Group the remaining dark hours into nights (runs of hours with is_day == 0)
     nights, current = [], []
-    for index, stamp in enumerate(hourly.get("time", [])):
+    for index, stamp in enumerate(hourly.get("time") or []):
         hour = datetime.fromisoformat(stamp)
         if hour < this_hour:
             continue
-        if hourly_value(hourly, "is_day", index) == 1:
+        # Only is_day == 0 counts as dark: daylight and missing values both end the night
+        if hourly_value(hourly, "is_day", index) != 0:
             if current:
                 nights.append(current)
                 current = []
