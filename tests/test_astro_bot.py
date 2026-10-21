@@ -279,6 +279,31 @@ class SkyExtensionTests(unittest.TestCase):
             self.assertIn("could not be retrieved", bot.get_sky_forecast("London", "KEY"))
 
 
+def make_night(hours=10, cloud=10, rain=0):
+    """Dark hours from 18:00 for the /sky rules; cloud and rain may be values or functions of the hour index."""
+    start = bot.datetime(2026, 10, 23, 18)
+    pick = lambda value, n: value(n) if callable(value) else value
+    return [{"time": start + bot.timedelta(hours=n), "cloud": pick(cloud, n), "visibility": 24000,
+             "rain": pick(rain, n), "moon_up": False} for n in range(hours)]
+
+
+class SkyReviewRegressionTests(unittest.TestCase):
+    """Regression tests for the issues found in the code review of the /sky extension."""
+
+    def test_high_rain_chance_is_never_rated_good(self):
+        verdict = bot.assess_sky(make_night(cloud=10, rain=90), illumination=0.1)
+        self.assertTrue(verdict.startswith("❌ Poor"), verdict)
+        self.assertIn("rain likely for most of the night (up to 90% chance)", verdict)
+
+    def test_occasional_rain_caps_the_verdict_at_fair(self):
+        verdict = bot.assess_sky(make_night(cloud=10, rain=lambda n: 70 if n >= 8 else 0), illumination=0.1)
+        self.assertTrue(verdict.startswith("⚠️ Fair"), verdict)
+        self.assertIn("rain likely at times (up to 70% chance)", verdict)
+
+    def test_dry_clear_night_is_still_good(self):
+        self.assertTrue(bot.assess_sky(make_night(cloud=10, rain=10), illumination=0.1).startswith("✅ Good"))
+
+
 class FormattingAndValidationTests(unittest.TestCase):
     def test_format_helpers(self):
         self.assertEqual(bot.format_value(None), "N/A")

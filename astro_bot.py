@@ -34,6 +34,7 @@ ISS_TIMEOUT = 5  # shorter wait for Open Notify, so the backup ISS API is tried 
 POLL_INTERVAL = 5  # seconds between checks for new Webex messages
 
 CLEAR_SKY_MAX_CLOUD = 30  # % cloud cover still counted as a clear spell for /sky
+RAIN_LIKELY_CHANCE = 50  # % chance of rain from which a /sky hour counts as wet
 MIN_NIGHT_HOURS = 3  # if less darkness than this is left (e.g. at dawn), /sky forecasts the next night
 
 MAX_CITY_LENGTH = 85
@@ -335,6 +336,8 @@ MOON_PHASES = [
     ("New Moon", "🌑"), ("Waxing Crescent", "🌒"), ("First Quarter", "🌓"), ("Waxing Gibbous", "🌔"),
     ("Full Moon", "🌕"), ("Waning Gibbous", "🌖"), ("Last Quarter", "🌗"), ("Waning Crescent", "🌘"),
 ]
+VERDICT_LABELS = ("✅ Good", "⚠️ Fair", "❌ Poor")
+CLOUD_LABELS = ("mostly clear", "partly cloudy", "mostly cloudy")
 
 
 def get_sky_forecast(city, api_key):
@@ -458,7 +461,8 @@ def find_best_window(night):
     # Longest run of consecutive dark hours with little cloud and a low chance of rain
     best, current = [], []
     for hour in night:
-        clear = hour["cloud"] is not None and hour["cloud"] <= CLEAR_SKY_MAX_CLOUD and (hour["rain"] or 0) < 50
+        clear = (hour["cloud"] is not None and hour["cloud"] <= CLEAR_SKY_MAX_CLOUD
+                 and (hour["rain"] or 0) < RAIN_LIKELY_CHANCE)
         current = current + [hour] if clear else []
         if len(current) > len(best):
             best = current
@@ -466,21 +470,30 @@ def find_best_window(night):
 
 
 def assess_sky(night, illumination):
-    # Overall verdict from the average cloud cover, then advice based on moonlight and fog
+    # Overall rating is the worse of the cloud and rain ratings; moonlight and fog advice follow
     clouds = [hour["cloud"] for hour in night if hour["cloud"] is not None]
     if not clouds:
         return "❔ Unknown - no cloud forecast"
     average = sum(clouds) / len(clouds)
-    if average <= CLEAR_SKY_MAX_CLOUD:
-        verdict = "✅ Good - mostly clear"
-    elif average <= 60:
-        verdict = "⚠️ Fair - partly cloudy"
-        if find_best_window(night):
-            verdict += " with clear spells"
-    else:
-        verdict = "❌ Poor - mostly cloudy"
+    cloud_level = 0 if average <= CLEAR_SKY_MAX_CLOUD else 1 if average <= 60 else 2
 
-    if average <= 60:
+    # Any wet hour caps the rating at Fair; rain for at least half the dark hours makes it Poor
+    rain_chances = [hour["rain"] for hour in night if hour["rain"] is not None]
+    wet_hours = [chance for chance in rain_chances if chance >= RAIN_LIKELY_CHANCE]
+    rain_level = 0 if not wet_hours else 2 if len(wet_hours) * 2 >= len(night) else 1
+
+    level = max(cloud_level, rain_level)
+    verdict = f"{VERDICT_LABELS[level]} - {CLOUD_LABELS[cloud_level]}"
+    if rain_level:
+        joiner = " but " if cloud_level == 0 else ", "
+        timing = "for most of the night" if rain_level == 2 else "at times"
+        verdict += f"{joiner}rain likely {timing} (up to {max(rain_chances):.0f}% chance)"
+    elif cloud_level == 1 and find_best_window(night):
+        verdict += " with clear spells"
+    if not rain_chances:
+        verdict += "; no rain forecast available"
+
+    if level < 2:
         moon_free = [hour for hour in night if hour["moon_up"] is False]
         if (illumination is not None and illumination <= 0.25) or len(moon_free) >= 0.75 * len(night):
             verdict += "; dark skies, great for galaxies, nebulae and the Milky Way"
