@@ -303,6 +303,29 @@ class SkyReviewRegressionTests(unittest.TestCase):
     def test_dry_clear_night_is_still_good(self):
         self.assertTrue(bot.assess_sky(make_night(cloud=10, rain=10), illumination=0.1).startswith("✅ Good"))
 
+    def window_line(self, night):
+        report = bot.format_sky_report(LONDON, {"daily": {}}, night)
+        return next(line for line in report.splitlines() if "Best viewing window" in line)
+
+    def test_no_window_blames_cloud_only_when_it_is_cloudy(self):
+        self.assertIn("none - cloud stays above 30% all night", self.window_line(make_night(cloud=80)))
+
+    def test_no_window_because_the_clear_hours_are_rainy(self):
+        line = self.window_line(make_night(cloud=10, rain=90))
+        self.assertIn("50% or higher chance of rain", line)
+        self.assertNotIn("cloud stays above", line)
+
+    def test_no_window_because_cloud_data_is_missing(self):
+        line = self.window_line(make_night(cloud=None))
+        self.assertIn("no cloud forecast available", line)
+        self.assertNotIn("cloud stays above", line)
+
+    def test_no_window_with_some_cloud_data_missing(self):
+        line = self.window_line(make_night(cloud=lambda n: None if n < 3 else 80))
+        self.assertIn("above 30% in every hour with a forecast (3 hours have no data)", line)
+        line = self.window_line(make_night(cloud=lambda n: None if n == 0 else 80))
+        self.assertIn("(1 hour has no data)", line)
+
 
 class FormattingAndValidationTests(unittest.TestCase):
     def test_format_helpers(self):

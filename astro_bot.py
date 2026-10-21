@@ -469,6 +469,21 @@ def find_best_window(night):
     return best
 
 
+def explain_no_window(night):
+    # Why find_best_window() found nothing: missing data, rain, or cloud
+    forecast_hours = [hour for hour in night if hour["cloud"] is not None]
+    if not forecast_hours:
+        return "no cloud forecast available"
+    if any(hour["cloud"] <= CLEAR_SKY_MAX_CLOUD for hour in forecast_hours):
+        # Some hours are clear enough, so rain must be what rules them out
+        return f"every clear hour has a {RAIN_LIKELY_CHANCE}% or higher chance of rain"
+    missing = len(night) - len(forecast_hours)
+    if missing:
+        return (f"cloud is above {CLEAR_SKY_MAX_CLOUD}% in every hour with a forecast "
+                f"({missing} {'hours have' if missing > 1 else 'hour has'} no data)")
+    return f"cloud stays above {CLEAR_SKY_MAX_CLOUD}% all night"
+
+
 def assess_sky(night, illumination):
     # Overall rating is the worse of the cloud and rain ratings; moonlight and fog advice follow
     clouds = [hour["cloud"] for hour in night if hour["cloud"] is not None]
@@ -644,7 +659,7 @@ def format_sky_report(location, forecast, night):
         window_line = (f"✨ Best viewing window: {format_hour_range(window, dark_until)} "
                        f"(cloud {CLEAR_SKY_MAX_CLOUD}% or less)")
     else:
-        window_line = f"✨ Best viewing window: none - cloud stays above {CLEAR_SKY_MAX_CLOUD}% all night"
+        window_line = f"✨ Best viewing window: none - {explain_no_window(night)}"
 
     rain_chances = [hour["rain"] for hour in night if hour["rain"] is not None]
     phase_name, moon_emoji, illumination = describe_moon(get_moon_phase(forecast, night))
