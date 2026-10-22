@@ -473,9 +473,10 @@ response = requests.post(url, headers=headers, data=json.dumps(data), timeout=RE
   - Malformed ISS coordinates are caught (`KeyError`, `TypeError`, `ValueError`).
   - As a last line of defence, the controller catches network errors and unexpected data around each command, so the bot always replies and keeps running.
   - If Open Notify times out (it did, several times in testing), `/iss` automatically uses the backup provider.
+  - The Open-Meteo forecast is checked before use (`find_forecast_problem()`). If it isn't a JSON object, covers fewer than 24 upcoming hours, or lacks `is_day` values, `/sky` says the forecast came back incomplete instead of guessing. A missing `is_day` value is never treated as darkness, so incomplete data can't be mistaken for the midnight sun.
 - **Excessive API calls are avoided.**
   - One `GET` every 5 seconds, using `max=1` so only one message is downloaded.
-  - External APIs are called only when a command needs them, and never in retry loops.
+  - External APIs are called only when a command needs them, and never in retry loops. `/sky` makes two calls (geocoding and forecast), far inside Open-Meteo's free limit of 10,000 a day.
   - Timeouts on every request.
   - Commands with invalid input are rejected *before* any API call is made.
 
@@ -488,7 +489,7 @@ Provide a short example based on your implementation
 
 | Component   | Description and Example (Relate to your Bot) |
 |------------|----------------------------------|
-| **Model**  | **Data and rules, with no knowledge of chat formatting.** The API functions fetch and return raw data: `get_city_coordinates()`, `get_current_weather()`, `reverse_geocode()`, `get_iss_backup_position()`, `get_latest_message()`, and the Open-Meteo call in `get_sky_forecast()`. The domain rules turn data into decisions: `assess_stargazing()`, `is_daytime()`, `get_night_hours()`, `find_best_window()`, `describe_moon()` and `assess_sky()`. *Example:* `get_current_weather(51.5, -0.13, key)` returns the OpenWeather dictionary, and `assess_stargazing()` turns it into `"Poor - 87% cloud cover"`. |
+| **Model**  | **Data and rules, with no knowledge of chat formatting.** The API functions fetch and return raw data: `get_city_coordinates()`, `get_current_weather()`, `reverse_geocode()`, `get_iss_backup_position()`, `get_latest_message()`, and the Open-Meteo call in `get_sky_forecast()`. The domain rules check data and turn it into decisions: `find_forecast_problem()`, `assess_stargazing()`, `is_daytime()`, `get_night_hours()`, `find_best_window()`, `explain_no_window()`, `describe_moon()` and `assess_sky()`. *Example:* `get_current_weather(51.5, -0.13, key)` returns the OpenWeather dictionary, and `assess_stargazing()` turns it into `"Poor - 87% cloud cover"`. |
 | **View**   | **Presentation only.** The FORMATTING FUNCTIONS section turns model data into readable chat replies: `format_weather_report()`, `format_iss_report()`, `format_sky_report()`, `format_help()`, plus helpers such as `format_value()` (N/A for missing data), `format_coordinates()` and `format_local_time()`. `send_message()` hands the reply to Webex as markdown with a plain-text fallback, and the Webex app does the final rendering on members' screens. *Example:* `format_iss_report()` turns `lat=-46.8871, lon=-60.0843` into `📍 Coordinates: 46.8871° S, 60.0843° W` and adds a map link. |
 | **Controller** | **Decides what happens.** `main()` loads the configuration, lets the operator pick a room, polls Webex, ignores old, duplicate and non-command messages, parses the command word and argument, validates input (`validate_city()`), and calls the right model and view functions. It also handles errors and remembers the bot's own reply IDs. *Example:* for `/sky Edinburgh`, `main()` validates `Edinburgh`, calls `get_sky_forecast()` and posts the result with `send_message()`. |
 
@@ -552,7 +553,7 @@ Reflect on your AstroBot (400 words):
 |---------|--------------|-----------|
 | `/weather <city>` | Current weather in the city's local time, plus a Good/Fair/Poor stargazing verdict | OpenWeather Geocoding + Current Weather |
 | `/iss` | Live ISS position (UTC time, coordinates, place below it, weather there, map link) | Open Notify (backup: wheretheiss.at), OpenWeather reverse geocoding + weather |
-| `/sky <city>` | **Extension:** the night's cloud forecast, best viewing window, Moon phase, moonrise and moonset, and a verdict | OpenWeather Geocoding + Open-Meteo |
+| `/sky <city>` | **Extension:** the night's cloud and rain forecast, best viewing window, Moon phase, moonrise and moonset, and a Good/Fair/Poor verdict | OpenWeather Geocoding + Open-Meteo |
 | `/help` | Lists the commands | none |
 | `/quit` | Stops the bot | none |
 
@@ -564,7 +565,7 @@ Tip: add a country code if a city name is ambiguous, e.g. `/weather London,GB` o
 
 Each development step was tested before it was committed. The commit messages record what was tested. All the tests below were **actually run** on 23 Oct 2026 (Windows 11, Python 3.15.1).
 
-**Automated:** `python -m unittest discover -s tests -v` runs **34 offline tests**, and all pass. They cover:
+**Automated:** `python -m unittest discover -s tests -v` runs **44 offline tests**, and all pass. They cover:
 
 - credential prompts;
 - Webex requests and status codes (401, 429 with `Retry-After`);
@@ -573,9 +574,19 @@ Each development step was tested before it was committed. The commit messages re
 - the ISS backup API;
 - the stargazing and Moon rules;
 - city validation;
+- the providers' credit lines;
 - the main loop (duplicates, the bot's own replies, network errors, no key in logs).
 
-The suite was checked by deliberately breaking the bot: removing the own-reply fix, or logging full exception text, makes the matching tests fail.
+The suite was checked by deliberately breaking the bot. Removing the own-reply fix, logging full exception text, or removing a provider credit each makes the matching tests fail.
+
+**Regression tests from the code review** (`SkyReviewRegressionTests`, 11 tests). The 8 that target the reported bugs did not pass against the code before each fix, and all 11 pass now. The other 3 guard behaviour that was already right: a dry, clear night stays Good; cloud is still blamed when it really is cloudy; a complete all-daylight forecast still reports the midnight sun.
+
+| Review finding | What the tests check |
+|---|---|
+| 1. A Good verdict despite a 90% chance of rain | High rain is never rated Good; occasional rain caps the night at Fair; a dry, clear night stays Good |
+| 2. The no-window message always blamed cloud | The reason given is cloud, rain or missing cloud data, as appropriate (including a count of hours with no data) |
+| 3. Missing `is_day` treated as darkness, false midnight sun | Missing values are not dark. Empty data, no `is_day`, only 6 hours of data, or a non-object response all give "came back incomplete". Only a complete all-daylight forecast gives the midnight sun |
+| Found while checking the docs | The rain chance is read for the hour it covers (`precipitation_probability` describes the preceding hour) |
 
 **Live API checks:**
 
@@ -587,8 +598,20 @@ The suite was checked by deliberately breaking the bot: removing the own-reply f
 - **Open Notify:** worked, but timed out intermittently, which led to adding the backup API.
 - **Backup ISS API:** used live, both when Open Notify was failed on purpose (in a test) and after a real timeout.
 - **Open-Meteo `/sky`:** London, Sydney (asked at dawn), Tromsø, Honolulu and Atacama.
+- **`/sky` after the review fixes:**
+  - London: Fair with clear spells.
+  - Edinburgh: Poor, rain likely at times (up to 84%).
+  - Real Open-Meteo data run through the bot's own functions for two polar places. For the **South Pole**, all 39 upcoming hours were daylight and the data passed the completeness check, so `/sky` would correctly report the midnight sun. **Longyearbyen** produced a 14-hour night with a rain-aware verdict.
 
-**Live end-to-end test (brief Step 11)** in the Webex space "Astro Club Room". The bot ran against the real room; the test messages were posted through the Webex API as the room owner, 12–25 seconds apart:
+**Live end-to-end test (brief Step 11)** in the Webex space "Astro Club Room". The bot ran against the real room; the test messages were posted through the Webex API as the room owner, 12–25 seconds apart. *This run used the code from before the review fixes (commit `01cf02b`).* Since then, the changes are:
+
+- the rain-aware `/sky` verdict;
+- forecast validation;
+- the no-window reasons;
+- the rain-hour alignment;
+- the credit line at the end of `/weather`, `/iss` and `/sky` replies.
+
+These were checked with the unit tests and live API calls above, but not yet through Webex.
 
 | Message sent | Bot's reply | Result |
 |---|---|---|
@@ -611,6 +634,7 @@ Every command got **exactly one** reply, and the bot never answered its own mess
 - Commands sent by a second member account, and commands typed by hand rather than posted through the API.
 - A real expired token (401) and real Webex rate limiting (429). Both are covered only by mocked tests.
 - Running for many hours, and running on the club's own server rather than the development PC.
+- The review fixes through Webex end to end, including how the new credit lines look in the Webex app.
 
 ---
 
@@ -620,4 +644,6 @@ Every command got **exactly one** reply, and the bot never answered its own mess
 - **Anyone in the room can send `/quit`.** It could be limited to the operator by comparing the message's `personId` with `GET /people/me`.
 - **Personal tokens expire after 12 hours**, so the bot needs restarting. A Webex bot account (with @mentions) or an OAuth integration would suit long-term use.
 - **Polling adds up to 5 seconds of delay.** Webhooks would be instant but need a public HTTPS endpoint on the club's server.
-- **The `/sky` verdict uses simple cloud and Moon thresholds.** Astronomical twilight, light pollution or seeing conditions (e.g. from the Astronomy API) would make it more accurate.
+- **The `/sky` verdict uses simple cloud, rain and Moon thresholds.** Astronomical twilight, light pollution or seeing conditions (e.g. from the Astronomy API) would make it more accurate.
+- **The Moon data rests on assumptions.** Open-Meteo does not document `moon_phase`, `moonrise` or `moonset` (see *Moon fields* above). If its definitions differ from what the data suggests, the phase, "% lit" and moonrise/moonset lines would be wrong. A documented astronomy API would remove this risk.
+- **Daylight-saving changes.** Open-Meteo applies one fixed UTC offset to the whole response. `/sky` times just after a clock change (such as 25 Oct 2026 in the UK) can therefore be an hour off. Requesting `timeformat=unixtime` and converting with the returned time zone would fix this.
