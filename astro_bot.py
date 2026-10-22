@@ -429,7 +429,8 @@ def get_night_hours(forecast, now=None):
             "time": hour,
             "cloud": hourly_value(hourly, "cloud_cover", index),
             "visibility": hourly_value(hourly, "visibility", index),
-            "rain": hourly_value(hourly, "precipitation_probability", index),
+            # precipitation_probability covers the preceding hour, so the next value describes this slot
+            "rain": hourly_value(hourly, "precipitation_probability", index + 1),
             "moon_up": is_moon_up(moon_events, hour),
         })
     if current:

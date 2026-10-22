@@ -197,7 +197,7 @@ class IssTests(unittest.TestCase):
         self.assertEqual(bot.epoch_to_utc(None), "Unknown time")
 
 
-def make_forecast(cloud=lambda hour: 10, always_day=False):
+def make_forecast(cloud=lambda hour: 10, always_day=False, rain=lambda hour: 0):
     """Two days of Open-Meteo data for London (local times), dark from 18:00 to 07:59."""
     start = bot.datetime(2026, 10, 23)
     hours = [start + bot.timedelta(hours=n) for n in range(48)]
@@ -208,7 +208,7 @@ def make_forecast(cloud=lambda hour: 10, always_day=False):
             "is_day": [1 if always_day or 8 <= hour.hour < 18 else 0 for hour in hours],
             "cloud_cover": [cloud(hour) for hour in hours],
             "visibility": [24000 for _ in hours],
-            "precipitation_probability": [0 for _ in hours],
+            "precipitation_probability": [rain(hour) for hour in hours],
         },
         "daily": {
             "time": ["2026-10-23", "2026-10-24"],
@@ -349,6 +349,13 @@ class SkyReviewRegressionTests(unittest.TestCase):
                 reply = sky_reply(forecast, now=bot.datetime(2026, 10, 23, 12))
                 self.assertIn("came back incomplete", reply)
                 self.assertNotIn("midnight sun", reply)
+
+    def test_rain_chance_is_read_for_the_hour_it_covers(self):
+        # Open-Meteo documents precipitation_probability as covering the preceding hour,
+        # so the value stamped 19:00 describes the 18:00-19:00 slot
+        forecast = make_forecast(rain=lambda hour: 80 if hour == bot.datetime(2026, 10, 23, 19) else 0)
+        night = bot.get_night_hours(forecast, now=bot.datetime(2026, 10, 23, 12))
+        self.assertEqual([hour["rain"] for hour in night[:2]], [80, 0])
 
     def test_complete_daylight_forecast_is_midnight_sun(self):
         reply = sky_reply(make_forecast(always_day=True), now=bot.datetime(2026, 10, 23, 12))
