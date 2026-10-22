@@ -389,7 +389,7 @@ flowchart LR
 
 **1. API keys and tokens**
 
-- **Nothing secret is in the source code or Git history.** `.gitignore` was the very first commit made in this project (`efbe946`), before any key existed, and it excludes `.env`. The committed `.env.example` documents the variable names with empty values.
+- **Nothing secret is in the source code or Git history.** `.gitignore`, which excludes `.env` and `.venv/`, was committed (`efbe946`) straight after the provided starter files (`22cc4d1`), before any other project files and before any key or `.env` file existed. The committed `.env.example` documents the variable names with empty values. A scan of the full history before the first push found neither the real token nor the API key.
 - **Keys are loaded at run time.** `main()` calls `load_dotenv()`, and `get_api_key()` offers the saved value. If the user types a key instead, `getpass` hides it, so it never appears on screen or in terminal recordings for the video:
 
   ```python
