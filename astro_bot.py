@@ -29,6 +29,10 @@ ISS_API_URL = "http://api.open-notify.org/iss-now.json"  # Open Notify only offe
 ISS_BACKUP_API_URL = "https://api.wheretheiss.at/v1/satellites/25544"  # 25544 = the ISS's NORAD ID
 SKY_API_URL = "https://api.open-meteo.com/v1/forecast"  # /sky extension (no key needed)
 
+# Credits the data providers' licences require wherever their data is shown
+OPENWEATHER_CREDIT = "Weather data © OpenWeather"  # wording recommended by OpenWeather (ODbL)
+OPEN_METEO_CREDIT = "Weather data by Open-Meteo.com (https://open-meteo.com/)"  # CC BY 4.0 needs a link
+
 REQUEST_TIMEOUT = 10  # seconds to wait for any API before giving up
 ISS_TIMEOUT = 5  # shorter wait for Open Notify, so the backup ISS API is tried sooner
 POLL_INTERVAL = 5  # seconds between checks for new Webex messages
@@ -620,6 +624,7 @@ def format_weather_report(location, weather):
         f"🌅 Sunrise {format_local_time(sun.get('sunrise'), offset, '%H:%M')} · "
         f"🌇 Sunset {format_local_time(sun.get('sunset'), offset, '%H:%M')} (local time)",
         f"🔭 **Stargazing: {assess_stargazing(weather)}**",
+        OPENWEATHER_CREDIT,
     ]
     return "\n".join(lines)
 
@@ -634,6 +639,7 @@ def format_iss_report(lat, lon, timestamp, place, weather):
         f"🌍 Location: {place}",
         f"🌦️ Weather below: {summarise_weather(weather)}",
         f"🗺️ Map: {map_link}",
+        OPENWEATHER_CREDIT,  # the place name and the weather below both come from OpenWeather
     ]
     return "\n".join(lines)
 
@@ -706,6 +712,7 @@ def format_sky_report(location, forecast, night):
         f"🌧️ Highest chance of rain: {format_value(max(rain_chances, default=None), '%', decimals=0)}",
         f"{moon_emoji} Moon: {phase_name}{lit}, {describe_moon_visibility(moon_events, dark_from, dark_until)}",
         f"🔭 **Verdict: {assess_sky(night, illumination)}**",
+        f"{OPEN_METEO_CREDIT} · place search © OpenWeather",
     ]
     return "\n".join(lines)
 

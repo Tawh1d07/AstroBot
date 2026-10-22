@@ -127,6 +127,7 @@ class WeatherTests(unittest.TestCase):
         self.assertIn("Weather for London, England, GB", reply)
         self.assertIn("Temperature: 7.3°C", reply)
         self.assertIn("Stargazing: Good - 5% cloud cover", reply)
+        self.assertIn("Weather data © OpenWeather", reply)  # attribution required by OpenWeather
         weather_call = get.call_args_list[-1]
         self.assertEqual(weather_call.kwargs["params"]["units"], "metric")
 
@@ -171,6 +172,7 @@ class IssTests(unittest.TestCase):
         self.assertIn("2026-10-23 18:28:46 UTC", reply)
         self.assertIn("10.0567° N, 80.7557° E", reply)
         self.assertIn("Over Ocean / No Nearby City", reply)
+        self.assertIn("Weather data © OpenWeather", reply)
 
     def test_backup_api_used_when_open_notify_times_out(self):
         backup = {"latitude": -3.5, "longitude": -110.4, "timestamp": 1792781908}
@@ -271,6 +273,7 @@ class SkyExtensionTests(unittest.TestCase):
         self.assertIn("Best viewing window: 18:00-07:39", reply)
         self.assertIn("Waxing Gibbous, 91% lit, sets 05:26", reply)
         self.assertIn("Verdict: ✅ Good - mostly clear", reply)
+        self.assertIn("Weather data by Open-Meteo.com (https://open-meteo.com/)", reply)  # CC BY 4.0 link
         params = get.call_args.kwargs["params"]
         self.assertEqual((params["timezone"], params["latitude"]), ("auto", 51.5073))
 
