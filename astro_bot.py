@@ -453,7 +453,9 @@ def hourly_value(hourly, key, index):
 
 
 def get_moon_events(daily):
-    # Sorted (time, is_rise) pairs; Open-Meteo gives null on days without a moonrise or moonset
+    # Sorted (time, is_rise) pairs from the daily moonrise/moonset lists.
+    # ASSUMPTION (Open-Meteo does not define these fields): they are local rise/set times, and null means
+    # no such event that day - which matches the real data checked (see README "Moon fields")
     events = []
     for key, is_rise in (("moonrise", True), ("moonset", False)):
         for stamp in daily.get(key) or []:
@@ -473,6 +475,7 @@ def is_moon_up(events, when):
 
 def get_moon_phase(forecast, night):
     # Open-Meteo's daily moon_phase for the date tonight's dark hours begin
+    # (the docs do not say which time of day the daily value refers to)
     daily = forecast.get("daily", {})
     dates, phases = daily.get("time", []), daily.get("moon_phase", [])
     start_date = night[0]["time"].date().isoformat()
@@ -484,11 +487,13 @@ def get_moon_phase(forecast, night):
 
 
 def describe_moon(phase):
-    # moon_phase runs 0 -> 1 through the cycle: 0 = new, 0.25 = first quarter, 0.5 = full, 0.75 = last quarter
+    # ASSUMPTION (not in Open-Meteo's docs, inferred from a month of observed values): moon_phase runs
+    # 0 -> 1 through the cycle: 0 = new, 0.25 = first quarter, 0.5 = full, 0.75 = last quarter
     if phase is None:
         return "Unknown phase", "🌙", None
     name, emoji = MOON_PHASES[int(phase * 8 + 0.5) % 8]
-    illumination = (1 - math.cos(2 * math.pi * phase)) / 2  # fraction of the Moon's disc that is lit
+    # Approximate fraction of the disc that is lit, derived from the assumed phase (not supplied by the API)
+    illumination = (1 - math.cos(2 * math.pi * phase)) / 2
     return name, emoji, illumination
 
 

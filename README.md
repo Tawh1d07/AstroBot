@@ -9,6 +9,8 @@ This investigation sheet helps you gather key technical information from the thr
 
 ##  Webex Messaging API (4 marks)
 
+**Official documentation:** [Getting started](https://developer.webex.com/messaging/docs/getting-started) · [List Rooms](https://developer.webex.com/messaging/docs/api/v1/rooms/list-rooms) · [List Messages](https://developer.webex.com/messaging/docs/api/v1/messages/list-messages) · [Create a Message](https://developer.webex.com/messaging/docs/api/v1/messages/create-a-message) · [API basics: handling 429 errors](https://developer.webex.com/docs/basics#handling-429-errors) (the same page explains markdown line breaks)
+
 | Criteria | Details |
 |---------|---------|
 | API Base URL | `https://webexapis.com/v1` |
@@ -46,6 +48,8 @@ This investigation sheet helps you gather key technical information from the thr
 ---
 
 ##  ISS Current Location API (2 marks)
+
+**Official documentation:** [Open Notify: ISS Current Location](http://open-notify.org/Open-Notify-API/ISS-Location-Now/) · backup provider: [Where the ISS at? REST API](https://wheretheiss.at/w/developer)
 
 | Criteria | Details |
 |---------|---------|
@@ -101,6 +105,8 @@ This investigation sheet helps you gather key technical information from the thr
 
 ##  Geocoding API (4 marks)
 
+**Official documentation:** [OpenWeather Geocoding API](https://openweathermap.org/api/geocoding-api)
+
 | Criteria | Details |
 |---------|---------|
 | Provider used (Choose one) | **OpenWeatherMap Geocoding API.** It uses the same account and API key as the Weather API, so the bot needs only one weather key. |
@@ -134,6 +140,8 @@ This investigation sheet helps you gather key technical information from the thr
 
 
 ##  Weather API (3 marks)
+
+**Official documentation:** [Current Weather Data](https://openweathermap.org/current) · [FAQ: key activation and error 401](https://openweathermap.org/faq#error401) · [Pricing and free-plan limits](https://openweathermap.org/price) · [Licences and attribution](https://openweathermap.org/full-price#licenses)
 
 | Criteria | Details |
 |---------|---------|
@@ -192,9 +200,13 @@ This investigation sheet helps you gather key technical information from the thr
 | `dt`, `timezone`, `sys.sunrise`, `sys.sunset` | UTC epoch times and the location's offset from UTC in seconds | Local observation time, sunrise and sunset, and whether it is currently dark |
 | `name`, `sys.country` | Place name and two-letter country code. Over the ocean `name` is an empty string and `country` is missing. | Location line, with an "Unknown" fallback |
 
+**Licence and attribution:** OpenWeather's self-service plans, the free plan included, are provided under the Open Database License (ODbL). OpenWeather requires "visible attribution to OpenWeather" on the screen where its data appears and recommends the line *"Weather data © OpenWeather"*. AstroBot ends every `/weather` and `/iss` reply with that line (`OPENWEATHER_CREDIT` in `astro_bot.py`).
+
 ---
 
 ##  Epoch to Human Time Conversion (Python time module) (2 marks)
+
+**Official documentation:** [`time` module](https://docs.python.org/3/library/time.html) ([`time.gmtime()`](https://docs.python.org/3/library/time.html#time.gmtime), [`time.strftime()`](https://docs.python.org/3/library/time.html#time.strftime)) · [`datetime.fromtimestamp()`](https://docs.python.org/3/library/datetime.html#datetime.datetime.fromtimestamp)
 
 | Criteria | Details |
 |---------|---------|
@@ -221,12 +233,14 @@ print(time.strftime("%Y-%m-%d %H:%M:%S UTC", utc_time))   # -> 2026-10-23 18:28:
 
 ##  Extended Feature API ( 3 marks)
 
+**Official documentation:** [Open-Meteo Forecast API](https://open-meteo.com/en/docs) · [Terms of use (free-tier limits)](https://open-meteo.com/en/terms) · [Licence (CC BY 4.0, attribution)](https://open-meteo.com/en/licence)
+
 | Criteria | Details |
 |---------|---------|
 | API Provider | **Open-Meteo Forecast API**: free, open-source weather and astronomy data, used for the new `/sky <city>` command |
 | API Base URL | `https://api.open-meteo.com/v1` |
 | Endpoint | `GET /forecast` |
-| Authentication method | None for non-commercial use. An `apikey` is only needed for the commercial `customer-` API. |
+| Authentication method | None for non-commercial use. An `apikey` is only needed for the commercial `customer-` API. The free tier is for non-commercial use only and allows fewer than 10,000 calls a day, 5,000 an hour and 600 a minute. |
 | Required query parameters | `latitude` and `longitude`. AstroBot also sends `hourly=cloud_cover,visibility,precipitation_probability,is_day`, `daily=sunrise,sunset,moonrise,moonset,moon_phase`, `timezone=auto` (times in the city's local time; required when asking for daily values), `past_days=1` and `forecast_days=2`. |
 | Sample JSON response (formatted example) | Live response for London captured on 23 Oct 2026 (below), trimmed to three evening hours and one day |
 
@@ -265,31 +279,54 @@ print(time.strftime("%Y-%m-%d %H:%M:%S UTC", utc_time))   # -> 2026-10-23 18:28:
 - It needs **no API key**, so there is no extra secret to manage and nothing to sign up for. It is reached over HTTPS.
 - `/sky` reuses the OpenWeather geocoding call (`get_city_coordinates()`) to turn a city name into coordinates, so the extension fits into the existing structure.
 
-**Findings from testing the data**
+**What the official docs define** (quoted from the [parameter definitions](https://open-meteo.com/en/docs))
 
-- Hourly `time` values are **local clock times without an offset** (with `timezone=auto`), so the bot compares them with the city's local "now", computed from `utc_offset_seconds`.
-- `moon_phase` is not documented on the docs page. Fetching a month of values showed it climbs steadily from 0 to 1 through the lunar cycle: it wrapped from 0.993 to 0.026 at the 10 Oct 2026 new moon and passed 0.5 at the 26 Oct full moon. So **0 = new, 0.25 = first quarter, 0.5 = full, 0.75 = last quarter**, and the illuminated fraction is (1 − cos 2π·phase) / 2. For 0.403 that gives about 91%.
-- `moonrise`/`moonset` can be `null` on days when the Moon does not rise or set, so the bot skips missing values.
-- `is_day` (1 or 0) marks the dark hours. In places with the midnight sun no hour is dark, and the bot says so instead of reporting an empty forecast.
+- `is_day`: *"1 if the current time step has daylight, 0 at night."* This marks the dark hours.
+- `cloud_cover`: *"Total cloud cover as an area fraction"*, an instant value in %. `visibility`: *"Viewing distance in meters. Influenced by low clouds, humidity and aerosols"*, also instant.
+- `precipitation_probability`: *"Probability of precipitation with more than 0.1 mm of the preceding hour."* The value stamped 23:00 therefore describes 22:00–23:00, so AstroBot reads the **next** hour's value for each hourly slot.
+- `sunrise`, `sunset`: *"Sun rise and set times."*
+- `timezone`: the resulting offset is *"returned as `utc_offset_seconds` and used for ISO 8601 timestamps and daily boundaries throughout the response."* The times are local clock times with no offset written in, so the bot compares them with the city's local "now" (`local_now()`). The docs also warn that *"Daylight saving time (DST) changes within the requested range are ignored"*: around a clock change (UK clocks go back on 25 Oct 2026), times after the change can be shown an hour off.
+
+**Moon fields: assumptions, not documentation**
+
+The docs only list "Moonrise", "Moonset" and "Moon Phase" in their variable picker. They give no definition, scale or time of day for them. AstroBot's Moon output therefore rests on the assumptions below, worked out from observed data rather than official documentation:
+
+| Field | What the docs say | What AstroBot assumes | Evidence | If the assumption is wrong |
+|---|---|---|---|---|
+| `moon_phase` | Name only; the response gives the unit `fraction` | Position in the lunar cycle from 0 to 1: 0 = new, 0.25 = first quarter, 0.5 = full, 0.75 = last quarter | Over 32 days of London values (7 Oct to 7 Nov 2026) it climbed steadily, wrapped from 0.993 to 0.026 at the 10 Oct new moon and read 0.510 on 26 Oct, the full moon | The phase name, the Moon emoji, the "% lit" figure and the moonlight advice in the verdict would all be wrong |
+| "% lit" | Not provided by Open-Meteo | Calculated as (1 − cos 2π·phase) / 2 from the assumed phase | 0.403, three days before full moon, gives 91% | Even if the phase assumption holds, this is an approximation that treats the Moon as moving at a constant speed |
+| Time of day of the daily `moon_phase` | Not stated | Used for the date the night begins | None | The phase advances about 0.034 a day, which can shift "% lit" by up to about 10 percentage points a day around the quarter phases |
+| `moonrise`, `moonset` | Names only | Local clock times of the Moon crossing the horizon (same time zone as sunrise and sunset); `null` means no such event that day | The times fit the phase (a waxing gibbous Moon rising at 16:33 and setting before dawn). Over 108 days (23 Jul to 7 Nov 2026), `moonrise` was `null` on 4 days and `moonset` on 4 days, each time between neighbours just before and after midnight (e.g. 23:45, `null`, 00:40) | The Moon line (e.g. "sets 05:26") and the moon-free hours used in the verdict would be wrong |
+
+These assumptions are also marked in the code comments of `get_moon_events()`, `get_moon_phase()` and `describe_moon()`. If Open-Meteo documents these fields in future, those functions are the only places to update.
 
 **How `/sky` turns the data into advice** (`ASTRONOMY EXTENSION FUNCTIONS` in `astro_bot.py`)
 
-1. `get_night_hours()` takes the dark hours from now until the next sunrise. If fewer than 3 are left (a request at dawn), it moves on to the next night.
-2. `find_best_window()` finds the longest run of hours with cloud cover of 30% or less and a rain chance under 50%.
-3. `describe_moon()` names the phase and works out how much of the Moon is lit. `describe_moon_visibility()` reports moonrise and moonset during the dark hours.
-4. `assess_sky()` gives a Good, Fair or Poor verdict from the average cloud cover. It then adds moonlight advice (dark skies for galaxies, or a bright Moon that suits the Moon and planets) and a warning if the forecast visibility drops below 2 km (mist or fog).
+1. `local_now()` works out the city's local time. `find_forecast_problem()` then checks the response is complete enough to use: a JSON object with at least 24 upcoming hours, each with an `is_day` value of 0 or 1. If not, `/sky` replies that the forecast came back incomplete instead of guessing.
+2. `get_night_hours()` takes the hours where `is_day` is 0, from now until the next sunrise. A missing value never counts as dark. If fewer than 3 dark hours are left (a request at dawn), it moves on to the next night. If the complete data has no dark hour at all, the reply reports the midnight sun.
+3. `find_best_window()` finds the longest run of hours with cloud cover of 30% or less and a rain chance under 50%. If there is none, `explain_no_window()` gives the real reason: cloud above 30%, rain during the clear hours, or no cloud forecast.
+4. `describe_moon()` names the phase and works out how much of the Moon is lit. `describe_moon_visibility()` reports moonrise and moonset during the dark hours. Both rely on the assumptions above.
+5. `assess_sky()` rates the night as the **worse** of two ratings:
+   - **Cloud:** an average of 30% or less is Good, 60% or less is Fair, anything higher is Poor.
+   - **Rain:** any hour with a 50%+ chance caps the night at Fair; wet hours for at least half the night make it Poor.
 
-Example reply (live, 23 Oct 2026):
+   For Good and Fair nights it then adds moonlight advice. It also warns if the forecast visibility drops below 2 km (mist or fog).
+6. The reply ends with *"Weather data by Open-Meteo.com (https://open-meteo.com/)"*. Open-Meteo's CC BY 4.0 licence requires a link wherever its data is shown, and OpenWeather is credited for the place search.
+
+Example reply (live, 23 Oct 2026, after the review fixes):
 
 ```text
 🔭 Stargazing forecast for London, England, GB, night of Fri 23 Oct
 🌇 Sunset 17:50 · 🌅 Sunrise 07:39 (local time)
-☁️ Cloud after dark: 48% on average (lowest 0% at 02:00)
-✨ Best viewing window: 00:00-04:00 (cloud 30% or less)
-🌧️ Highest chance of rain: 39%
+☁️ Cloud after dark: 45% on average (lowest 0% at 23:00)
+✨ Best viewing window: 22:00-03:00 (cloud 30% or less)
+🌧️ Highest chance of rain: 6%
 🌔 Moon: Waxing Gibbous, 91% lit, sets 05:26
 🔭 Verdict: ⚠️ Fair - partly cloudy with clear spells; the bright Moon favours the Moon and planets over faint galaxies
+Weather data by Open-Meteo.com (https://open-meteo.com/) · place search © OpenWeather
 ```
+
+The same evening, Edinburgh had a clear spell but up to an 84% chance of rain. The old rules ignored rain; the verdict now reads *"❌ Poor - mostly cloudy, rain likely at times (up to 84% chance)"*.
 
 --- 
 
