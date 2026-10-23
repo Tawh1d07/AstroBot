@@ -7,7 +7,7 @@ This investigation sheet helps you gather key technical information from the thr
 
 ---
 
-##  Webex Messaging API (4 marks)
+##  Webex Messaging API
 
 **Official documentation:** [Getting started](https://developer.webex.com/messaging/docs/getting-started) · [List Rooms](https://developer.webex.com/messaging/docs/api/v1/rooms/list-rooms) · [List Messages](https://developer.webex.com/messaging/docs/api/v1/messages/list-messages) · [Create a Message](https://developer.webex.com/messaging/docs/api/v1/messages/create-a-message) · [API basics: handling 429 errors](https://developer.webex.com/docs/basics#handling-429-errors) (the same page explains markdown line breaks)
 
@@ -47,7 +47,7 @@ This investigation sheet helps you gather key technical information from the thr
 
 ---
 
-##  ISS Current Location API (2 marks)
+##  ISS Current Location API
 
 **Official documentation:** [Open Notify: ISS Current Location](http://open-notify.org/Open-Notify-API/ISS-Location-Now/) · backup provider: [Where the ISS at? REST API](https://wheretheiss.at/w/developer)
 
@@ -103,7 +103,7 @@ This investigation sheet helps you gather key technical information from the thr
 
 ---
 
-##  Geocoding API (4 marks)
+##  Geocoding API
 
 **Official documentation:** [OpenWeather Geocoding API](https://openweathermap.org/api/geocoding-api)
 
@@ -139,7 +139,7 @@ This investigation sheet helps you gather key technical information from the thr
 ---
 
 
-##  Weather API (3 marks)
+##  Weather API
 
 **Official documentation:** [Current Weather Data](https://openweathermap.org/current) · [FAQ: key activation and error 401](https://openweathermap.org/faq#error401) · [Pricing and free-plan limits](https://openweathermap.org/price) · [Licences and attribution](https://openweathermap.org/full-price#licenses)
 
@@ -231,7 +231,7 @@ print(time.strftime("%Y-%m-%d %H:%M:%S UTC", utc_time))   # -> 2026-10-23 18:28:
 
 ---
 
-##  Extended Feature API ( 3 marks)
+##  Extended Feature API
 
 **Official documentation:** [Open-Meteo Forecast API](https://open-meteo.com/en/docs) · [Terms of use (free-tier limits)](https://open-meteo.com/en/terms) · [Licence (CC BY 4.0, attribution)](https://open-meteo.com/en/licence)
 
@@ -336,7 +336,7 @@ In this section, evaluate how web technologies, architecture, and design pattern
 
 ---
 
-###  Web Architecture – Client–Server Model (3 marks)
+###  Web Architecture – Client–Server Model
 
 Explain how the client–server model applies to your AstroBot:
 
@@ -384,7 +384,7 @@ flowchart LR
 
 **Design decision: polling instead of webhooks.** Webex could instead push each new message to AstroBot (a webhook). That would make AstroBot a *server*, needing a public HTTPS address and a hole in the club's firewall. Polling keeps AstroBot a pure client that can run behind the club's Wi-Fi with no inbound connections. The cost is a reply delay of up to 5 seconds and 12 requests a minute, well inside Webex's limit of roughly 300 requests a minute.
 
-####  Security Considerations: (3 marks )
+####  Security Considerations:
 - Consider but not limiting to secure handling of API keys and tokens, API rate limiting, and Input validation (e.g., handling user commands safely), include examples from code where necessary to illustrate.
 
 **1. API keys and tokens**
@@ -422,8 +422,7 @@ flowchart LR
 
 ---
 
-###  RESTful API Usage in Your Application (3 marks )
-
+###  RESTful API Usage in Your Application
 Explain how REST APIs are used in your AstroBot: 
 
 - Describe how HTTP methods (GET, POST) are used  
@@ -482,7 +481,7 @@ response = requests.post(url, headers=headers, data=json.dumps(data), timeout=RE
 
 ---
 
-###  MVC Design Pattern in AstroBot (3 Marks)
+###  MVC Design Pattern in AstroBot
 
 Explain how the **Model–View–Controller (MVC)** pattern applies to your solution:
 Provide a short example based on your implementation
@@ -503,7 +502,7 @@ Because the brief requires a single starter script, MVC is applied as **separate
 
 ---
 
-### 📝 Reflection and Evaluation ( 8 marks )
+### 📝 Reflection and Evaluation
 
 Reflect on your AstroBot (400 words):
 
@@ -513,11 +512,23 @@ Reflect on your AstroBot (400 words):
 - What security risks did you identify and how were they handled?  
 - How could your solution be improved in the future?  
 
-> ✏️ **TODO – write this section in your own words before submitting (about 400 words).** It is a personal reflection, so it has deliberately been left for you. The "Test evidence" and "Known limitations" sections at the end of this README list facts you can draw on.
+ My AstroBot provides the Astronomy Club with Weather updates, the current position of the International Space Station, as well as the star watching forecast. Information is not gathered from several different sites; instead, members can simply use basic commands to get updates. My responsibilities include creating accounts and setting up APIs and repositories on GitHub, as well as checking the responses within Webex.
+
+In general, one of the most efficient aspects of the software design was the division of the program into several functions. Functions are created to send requests via an API, process the received command, format the output message and perform other tasks separately. This will allow to check separate segments of code for errors. The `/sky` extension has practical usage because it suggests viewing windows using cloud cover and rain probability, as well as the information regarding the Moon.
+
+As for the main challenges associated with API integration in the program, the first one was the necessity to wait for activation of OpenWeather API key because, in case of an authentication error, there might be a problem with the code. There were timeouts with Open Notify API. Another solution, where an alternative ISS provider was used, increased the system's reliability if the main provider went down. All those mistakes clearly explained the need for timeouts, correct error messages, and proper reaction to request failure in a program.
+
+Security is also an important aspect. The secret API key and Webex token are kept in the .env file which is not stored in Git. This helps to avoid the publication of access credentials in the repository. The program controls the names of the cities, checks HTTP status code and reacts on failed requests. Polling every five seconds makes it possible to limit frequent checking of Webex, but rate-limited answers get additional handling.
+
+Testing revealed issues that would remain undetected by successful API calls. At the code review stage, the star gazing prediction could report the weather as good even in case of a very likely rain. Lacking information about weather could return a false answer too. Such misbehavior got fixed and regression tests implemented. Next, I sent /weather, /iss and /sky to Webex manually and checked if the responses were clear enough.
+Even though, there are shortcomings with the bot. For instance, reading only the last message implies that commands given close to each other will not be executed properly. The personal Webex token will get invalid after some time and the room members have the freedom of stopping the bot anytime. The Moon calculation is done based on certain assumptions about undocumented parameters. Similarly, the time for forecasting may change based on daylight-saving effects.
+
+Some of the modifications that should be done for future work will include reading all the messages that were not seen before, limitation on administration commands as well as use of an astronomy service that is well documented. In conclusion, the whole process shows that Python programming language is capable of joining multiple web services together in order to form one application.
+
 
 ---
 
- **Tip:** Link your answers directly to your code and examples for higher marks.
+
 ### Notes
 
 - Use official documentation for accuracy (e.g. developer.webex.com, locationiq.com or Mapbox, open-notify.org or other ISS API).
