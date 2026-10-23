@@ -603,30 +603,32 @@ The suite was checked by deliberately breaking the bot. Removing the own-reply f
   - Edinburgh: Poor, rain likely at times (up to 84%).
   - Real Open-Meteo data run through the bot's own functions for two polar places. For the **South Pole**, all 39 upcoming hours were daylight and the data passed the completeness check, so `/sky` would correctly report the midnight sun. **Longyearbyen** produced a 14-hour night with a rain-aware verdict.
 
-**Live end-to-end test (brief Step 11)** in the Webex space "Astro Club Room". The bot ran against the real room; the test messages were posted through the Webex API as the room owner, 12–25 seconds apart. *This run used the code from before the review fixes (commit `01cf02b`).* Since then, the changes are:
+**Live end-to-end test (brief Step 11)**, rerun on 23 Oct 2026 against the current code (`astro_bot.py` as of commit `cf6ca66`, which includes all the review fixes) in the Webex space "Astro Club Room". A test script started the real bot, posted the messages through the Webex API as the room owner, and read the room back afterwards. To test duplicate handling it:
 
-- the rain-aware `/sky` verdict;
-- forecast validation;
-- the no-window reasons;
-- the rain-hour alignment;
-- the credit line at the end of `/weather`, `/iss` and `/sky` replies.
-
-These were checked with the unit tests and live API calls above, but not yet through Webex.
+- posted a `/help` *before* the bot started, which the bot must treat as old and ignore;
+- after each reply, kept watching for 16 more seconds (three more 5-second polls) to catch any duplicate reply;
+- sent `/help` a second time near the end, which is a new message and should get exactly one new reply.
 
 | Message sent | Bot's reply | Result |
 |---|---|---|
-| `Hello everyone, testing AstroBot` | (none: not a command) | ✅ ignored |
+| `/help` *(posted before the bot started)* | none: an old message | ✅ ignored |
+| `Hello again, AstroBot retest …` | none: not a command | ✅ ignored |
 | `/help` | Command list (6 lines) | ✅ |
-| `/weather London,GB` | 9-line report, "Stargazing: Poor - 87% cloud cover" | ✅ |
+| `/weather London,GB` | 10-line report ending "Stargazing: Poor - 72% cloud cover" and "Weather data © OpenWeather" | ✅ |
 | `/weather Qwzxv` | "❌ I couldn't find a city called 'Qwzxv'…" | ✅ |
 | `/weather` | "ℹ️ Usage: /weather <city>…" | ✅ |
 | `/weather <script>alert(1)</script>` | "⚠️ Please send a plain city name…" | ✅ rejected before any API call |
-| `/iss` | Position over the South Atlantic (Open Notify timed out, so the **backup API was used automatically**) | ✅ |
-| `/sky Edinburgh` | Night forecast: best window 00:00–03:00, Moon 91% lit, sets 05:43 | ✅ |
+| `/iss` | Position 51.3488° N, 141.5959° E (over the ocean), the weather below, and "Weather data © OpenWeather" | ✅ |
+| `/sky Edinburgh` | Night forecast: best window 00:00–03:00, rain chance up to 84%, Moon 91% lit and setting at 05:43. Verdict: "❌ Poor - mostly cloudy, rain likely at times (up to 84% chance)". Ends with the Open-Meteo credit and link | ✅ |
+| `/sky` | "ℹ️ Usage: /sky <city>…" | ✅ |
+| `/sky 12345` | "⚠️ Please send a plain city name…" | ✅ |
 | `/stars` | "❓ Unknown command…" | ✅ |
+| `/help` *(again)* | Command list | ✅ answered once, as a new message |
 | `/quit` | "🔭 AstroBot is shutting down. Clear skies!" and the bot exited (code 0) | ✅ |
 
-Every command got **exactly one** reply, and the bot never answered its own messages. The HTML that Webex stored contains one `<br>` per line break, plus `<strong>` and `<code>` formatting. The bot's console log contained neither the token nor the API key.
+Every command got **exactly one** reply. The old message, the chat message and the bot's own replies got none. The bot logged each of the 13 messages it received exactly once, and replies arrived 4–7 seconds after each command. The HTML that Webex stored has the expected number of line breaks for every reply (for example, 10 lines for `/weather`, including the credit line), plus `<strong>` and `<code>` formatting. The bot's console log contained neither the token nor the API key.
+
+An earlier run, on the code from before the review fixes (commit `01cf02b`), also passed. In that run Open Notify timed out during `/iss`, and the backup ISS API answered automatically.
 
 **Not yet tested:**
 
@@ -634,7 +636,6 @@ Every command got **exactly one** reply, and the bot never answered its own mess
 - Commands sent by a second member account, and commands typed by hand rather than posted through the API.
 - A real expired token (401) and real Webex rate limiting (429). Both are covered only by mocked tests.
 - Running for many hours, and running on the club's own server rather than the development PC.
-- The review fixes through Webex end to end, including how the new credit lines look in the Webex app.
 
 ---
 
