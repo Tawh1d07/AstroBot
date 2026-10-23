@@ -389,7 +389,7 @@ flowchart LR
 
 **1. API keys and tokens**
 
-- **Nothing secret is in the source code or Git history.** `.gitignore`, which excludes `.env` and `.venv/`, was committed (`efbe946`) straight after the provided starter files (`22cc4d1`), before any other project files and before any key or `.env` file existed. The committed `.env.example` documents the variable names with empty values. A scan of the full history before the first push found neither the real token nor the API key.
+- **Nothing secret is in the source code or Git history.** `.gitignore`, which excludes `.env` and `.venv/`, was committed (`3f63890`) straight after the provided starter files (`22cc4d1`), before any other project files and before any key or `.env` file existed. The committed `.env.example` documents the variable names with empty values. A scan of the full history before the first push found neither the real token nor the API key.
 - **Keys are loaded at run time.** `main()` calls `load_dotenv()`, and `get_api_key()` offers the saved value. If the user types a key instead, `getpass` hides it, so it never appears on screen or in terminal recordings for the video:
 
   ```python
@@ -621,7 +621,7 @@ The suite was checked by deliberately breaking the bot. Each of these makes the 
   - Edinburgh: Poor, rain likely at times (up to 84%).
   - Real Open-Meteo data run through the bot's own functions for two polar places. For the **South Pole**, all 39 upcoming hours were daylight and the data passed the completeness check, so `/sky` would correctly report the midnight sun. **Longyearbyen** produced a 14-hour night with a rain-aware verdict.
 
-**Live end-to-end test (brief Step 11)**, rerun on 23 Oct 2026 against the current code (`astro_bot.py` as of commit `cf6ca66`, which includes all the review fixes) in the Webex space "Astro Club Room". A test script started the real bot, posted the messages through the Webex API as the room owner, and read the room back afterwards. To test duplicate handling it:
+**Live end-to-end test (brief Step 11)**, rerun on 23 Oct 2026 against the current code (`astro_bot.py` as of commit `9b07799`, which includes all the review fixes) in the Webex space "Astro Club Room". A test script started the real bot, posted the messages through the Webex API as the room owner, and read the room back afterwards. To test duplicate handling it:
 
 - posted a `/help` *before* the bot started, which the bot must treat as old and ignore;
 - after each reply, kept watching for 16 more seconds (three more 5-second polls) to catch any duplicate reply;
@@ -646,7 +646,7 @@ The suite was checked by deliberately breaking the bot. Each of these makes the 
 
 Every command got **exactly one** reply. The old message, the chat message and the bot's own replies got none. The bot logged each of the 13 messages it received exactly once, and replies arrived 4–7 seconds after each command. The HTML that Webex stored has the expected number of line breaks for every reply (for example, 10 lines for `/weather`, including the credit line), plus `<strong>` and `<code>` formatting. The bot's console log contained neither the token nor the API key.
 
-An earlier run, on the code from before the review fixes (commit `01cf02b`), also passed. In that run Open Notify timed out during `/iss`, and the backup ISS API answered automatically.
+An earlier run, on the code from before the review fixes (commit `12b7113`), also passed. In that run Open Notify timed out during `/iss`, and the backup ISS API answered automatically.
 
 A later follow-up fix checks the forecast's type before reading it and adds `AttributeError` to the controller's safety net. It only changes how *malformed* API responses are handled, which can't be triggered from Webex, so it is covered by the offline tests above rather than by this run.
 
