@@ -370,9 +370,14 @@ def get_sky_forecast(city, api_key):
         return "⚠️ Sorry, the stargazing forecast could not be retrieved right now. Please try again later."
 
     forecast = response.json()
-    now = local_now(forecast)
 
-    problem = find_forecast_problem(forecast, now)
+    # Check the type first: local_now() and every check below read the response as a JSON object
+    if isinstance(forecast, dict):
+        now = local_now(forecast)
+        problem = find_forecast_problem(forecast, now)
+    else:
+        problem = "the response is not a JSON object"
+
     if problem:
         print("Open-Meteo forecast incomplete:", problem)
         return ("⚠️ Sorry, the stargazing forecast came back incomplete, so I can't work out "
@@ -395,9 +400,8 @@ def local_now(forecast):
 
 
 def find_forecast_problem(forecast, now):
-    # Why the forecast cannot be trusted to find dark hours, or None if it is complete enough
-    if not isinstance(forecast, dict):
-        return "the response is not a JSON object"
+    # Why the forecast (already known to be a JSON object) cannot be trusted to find dark hours,
+    # or None if it is complete enough
     hourly = forecast.get("hourly") or {}
     this_hour = now.replace(minute=0, second=0, microsecond=0)
     upcoming = [index for index, stamp in enumerate(hourly.get("time") or [])
@@ -835,7 +839,8 @@ def main():
             except requests.RequestException as error:
                 print("API request failed:", type(error).__name__)
                 reply = "⚠️ Sorry, I couldn't reach one of the data services. Please try again in a minute."
-            except (KeyError, TypeError, ValueError) as error:
+            except (AttributeError, KeyError, TypeError, ValueError) as error:
+                # e.g. a field of the wrong type, such as a list where an object was expected
                 print("Unexpected API data:", type(error).__name__, error)
                 reply = "⚠️ Sorry, a data service sent an unexpected response. Please try again later."
 

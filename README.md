@@ -302,7 +302,7 @@ These assumptions are also marked in the code comments of `get_moon_events()`, `
 
 **How `/sky` turns the data into advice** (`ASTRONOMY EXTENSION FUNCTIONS` in `astro_bot.py`)
 
-1. `local_now()` works out the city's local time. `find_forecast_problem()` then checks the response is complete enough to use: a JSON object with at least 24 upcoming hours, each with an `is_day` value of 0 or 1. If not, `/sky` replies that the forecast came back incomplete instead of guessing.
+1. `get_sky_forecast()` first checks the response is a JSON object, before anything reads it. Then `local_now()` works out the city's local time, and `find_forecast_problem()` checks the forecast is complete enough to use: at least 24 upcoming hours, each with an `is_day` value of 0 or 1. If either check fails (for example, a list or `null` instead of an object), `/sky` replies that the forecast came back incomplete instead of guessing.
 2. `get_night_hours()` takes the hours where `is_day` is 0, from now until the next sunrise. A missing value never counts as dark. If fewer than 3 dark hours are left (a request at dawn), it moves on to the next night. If the complete data has no dark hour at all, the reply reports the midnight sun.
 3. `find_best_window()` finds the longest run of hours with cloud cover of 30% or less and a rain chance under 50%. If there is none, `explain_no_window()` gives the real reason: cloud above 30%, rain during the clear hours, or no cloud forecast.
 4. `describe_moon()` names the phase and works out how much of the Moon is lit. `describe_moon_visibility()` reports moonrise and moonset during the dark hours. Both rely on the assumptions above.
@@ -471,7 +471,7 @@ response = requests.post(url, headers=headers, data=json.dumps(data), timeout=RE
 - **Invalid or unexpected responses are handled safely.**
   - Fields are read with `.get()` and defaults, and `format_value()` / `format_place()` show **N/A** or **Unknown** for anything missing.
   - Malformed ISS coordinates are caught (`KeyError`, `TypeError`, `ValueError`).
-  - As a last line of defence, the controller catches network errors and unexpected data around each command, so the bot always replies and keeps running.
+  - As a last line of defence, the controller catches network errors and unexpected data around each command, including fields of the wrong type (`AttributeError`, `KeyError`, `TypeError`, `ValueError`), so the bot always replies and keeps running.
   - If Open Notify times out (it did, several times in testing), `/iss` automatically uses the backup provider.
   - The Open-Meteo forecast is checked before use (`find_forecast_problem()`). If it isn't a JSON object, covers fewer than 24 upcoming hours, or lacks `is_day` values, `/sky` says the forecast came back incomplete instead of guessing. A missing `is_day` value is never treated as darkness, so incomplete data can't be mistaken for the midnight sun.
 - **Excessive API calls are avoided.**
@@ -565,7 +565,7 @@ Tip: add a country code if a city name is ambiguous, e.g. `/weather London,GB` o
 
 Each development step was tested before it was committed. The commit messages record what was tested. All the tests below were **actually run** on 23 Oct 2026 (Windows 11, Python 3.15.1).
 
-**Automated:** `python -m unittest discover -s tests -v` runs **44 offline tests**, and all pass. They cover:
+**Automated:** `python -m unittest discover -s tests -v` runs **46 offline tests**, and all pass. They cover:
 
 - credential prompts;
 - Webex requests and status codes (401, 429 with `Retry-After`);
@@ -577,15 +577,22 @@ Each development step was tested before it was committed. The commit messages re
 - the providers' credit lines;
 - the main loop (duplicates, the bot's own replies, network errors, no key in logs).
 
-The suite was checked by deliberately breaking the bot. Removing the own-reply fix, logging full exception text, or removing a provider credit each makes the matching tests fail.
+The suite was checked by deliberately breaking the bot. Each of these makes the matching tests fail:
 
-**Regression tests from the code review** (`SkyReviewRegressionTests`, 11 tests). The 8 that target the reported bugs did not pass against the code before each fix, and all 11 pass now. The other 3 guard behaviour that was already right: a dry, clear night stays Good; cloud is still blamed when it really is cloudy; a complete all-daylight forecast still reports the midnight sun.
+- removing the own-reply fix;
+- logging full exception text;
+- removing a provider credit;
+- reading the clock before checking the forecast's type;
+- dropping `AttributeError` from the controller's safety net.
+
+**Regression tests from the code reviews** (`SkyReviewRegressionTests`, 12 tests). The 9 that target the reported bugs did not pass against the code before each fix, and all 12 pass now. The other 3 guard behaviour that was already right: a dry, clear night stays Good; cloud is still blamed when it really is cloudy; a complete all-daylight forecast still reports the midnight sun.
 
 | Review finding | What the tests check |
 |---|---|
 | 1. A Good verdict despite a 90% chance of rain | High rain is never rated Good; occasional rain caps the night at Fair; a dry, clear night stays Good |
 | 2. The no-window message always blamed cloud | The reason given is cloud, rain or missing cloud data, as appropriate (including a count of hours with no data) |
-| 3. Missing `is_day` treated as darkness, false midnight sun | Missing values are not dark. Empty data, no `is_day`, only 6 hours of data, or a non-object response all give "came back incomplete". Only a complete all-daylight forecast gives the midnight sun |
+| 3. Missing `is_day` treated as darkness, false midnight sun | Missing values are not dark. Empty data, no `is_day`, or only 6 hours of data all give "came back incomplete". Only a complete all-daylight forecast gives the midnight sun |
+| Follow-up review: a list or `null` forecast crashed `local_now()` and could stop the bot | With the real clock (no mocking), `[]` and `null` give "came back incomplete". In the full bot loop (`MainLoopTests`), a list and an object with a wrongly typed `hourly` field both get a reply, and the bot carries on to `/quit` |
 | Found while checking the docs | The rain chance is read for the hour it covers (`precipitation_probability` describes the preceding hour) |
 
 **Live API checks:**
@@ -629,6 +636,8 @@ The suite was checked by deliberately breaking the bot. Removing the own-reply f
 Every command got **exactly one** reply. The old message, the chat message and the bot's own replies got none. The bot logged each of the 13 messages it received exactly once, and replies arrived 4–7 seconds after each command. The HTML that Webex stored has the expected number of line breaks for every reply (for example, 10 lines for `/weather`, including the credit line), plus `<strong>` and `<code>` formatting. The bot's console log contained neither the token nor the API key.
 
 An earlier run, on the code from before the review fixes (commit `01cf02b`), also passed. In that run Open Notify timed out during `/iss`, and the backup ISS API answered automatically.
+
+A later follow-up fix checks the forecast's type before reading it and adds `AttributeError` to the controller's safety net. It only changes how *malformed* API responses are handled, which can't be triggered from Webex, so it is covered by the offline tests above rather than by this run.
 
 **Not yet tested:**
 

@@ -18,12 +18,15 @@ import requests  # noqa: E402
 import astro_bot as bot  # noqa: E402
 
 
+NO_PAYLOAD = object()  # lets a test pass a real JSON null (None) as the payload
+
+
 class FakeResponse:
     """Just enough of requests.Response for the bot's code."""
 
-    def __init__(self, status_code=200, payload=None, headers=None):
+    def __init__(self, status_code=200, payload=NO_PAYLOAD, headers=None):
         self.status_code = status_code
-        self._payload = payload if payload is not None else {}
+        self._payload = {} if payload is NO_PAYLOAD else payload
         self.headers = headers or {}
 
     def json(self):
@@ -346,10 +349,23 @@ class SkyReviewRegressionTests(unittest.TestCase):
         too_short = make_forecast(always_day=True)
         too_short["hourly"] = {key: values[12:18] for key, values in too_short["hourly"].items()}  # 6 hours left
         cases = {"empty hourly data": {"hourly": {}, "daily": {}}, "no is_day values": no_is_day,
-                 "only 6 hours of data": too_short, "not a JSON object": []}
+                 "only 6 hours of data": too_short}
         for label, forecast in cases.items():
             with self.subTest(label):
                 reply = sky_reply(forecast, now=bot.datetime(2026, 10, 23, 12))
+                self.assertIn("came back incomplete", reply)
+                self.assertNotIn("midnight sun", reply)
+
+    def test_list_or_null_forecast_is_rejected_before_reading_the_clock(self):
+        # The real local_now() runs here (no mocking): a non-object response must be rejected
+        # before local_now() or anything else tries to read it
+        for payload in ([], None):
+            with self.subTest(payload=payload):
+                responses = route({"/geo/1.0/direct": FakeResponse(200, [LONDON]),
+                                   "open-meteo": FakeResponse(200, payload)})
+                with mock.patch.object(bot.requests, "get", side_effect=responses), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    reply = bot.get_sky_forecast("London", "KEY")
                 self.assertIn("came back incomplete", reply)
                 self.assertNotIn("midnight sun", reply)
 
@@ -451,6 +467,23 @@ class MainLoopTests(unittest.TestCase):
         with mock.patch.object(bot, "format_help", return_value="/weather <city>\n/iss\n/help\n/quit"):
             run_bot(room)
         self.assertEqual(room.bot_replies(), ["/weather <city>\n/iss\n/help\n/quit", "🔭 AstroBot is shutting down. Clear skies!"])
+
+    def test_malformed_sky_forecast_does_not_stop_the_bot(self):
+        # A list instead of an object, then an object whose "hourly" field is the wrong type
+        forecasts = iter([[], {"hourly": [1, 2]}])
+
+        def other_apis(url, **kwargs):
+            if "/geo/1.0/direct" in url:
+                return FakeResponse(200, [LONDON])
+            return FakeResponse(200, next(forecasts))
+
+        room = FakeWebexRoom(["/sky London", "/sky Paris", "/quit"])
+        run_bot(room, extra_get=other_apis)
+        replies = room.bot_replies()
+        self.assertEqual(len(replies), 3, replies)
+        self.assertIn("came back incomplete", replies[0])
+        self.assertIn("unexpected response", replies[1])
+        self.assertIn("shutting down", replies[2])  # the bot kept running until /quit
 
     def test_network_errors_do_not_stop_the_bot_or_leak_the_key(self):
         def weather_down(url, **kwargs):
