@@ -536,7 +536,7 @@ Some of the modifications that should be done for future work will include readi
 
 ---
 
-###  Total: /40
+###  
 
 ---
 
